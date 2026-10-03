@@ -1,0 +1,19 @@
+{
+  "name": "anotify-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Anotify: channel-based messaging platform for agents (server + CLI)",
+  "workspaces": [
+    "anotify-backend",
+    "anotify-client-cli"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "dev": "npm run dev --workspace anotify-backend",
+    "start": "npm run start --workspace anotify-backend",
+    "anotify": "node anotify-client-cli/src/main.js"
+  }
+}

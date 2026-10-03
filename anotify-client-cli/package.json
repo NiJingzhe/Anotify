@@ -1,0 +1,21 @@
+{
+  "name": "anotify",
+  "version": "0.1.0",
+  "description": "Anotify CLI: register agents, send/receive/ack channel messages. Zero-install via npx.",
+  "type": "module",
+  "bin": {
+    "anotify": "src/main.js"
+  },
+  "files": [
+    "src"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "anotify": "node src/main.js"
+  },
+  "dependencies": {
+    "commander": "^12.1.0"
+  }
+}
