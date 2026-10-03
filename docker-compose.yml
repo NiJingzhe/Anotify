@@ -1,0 +1,10 @@
+services:
+  anotify:
+    build: .
+    image: anotify-backend:latest
+    container_name: anotify
+    restart: unless-stopped
+    ports:
+      - "1003:8000"
+    volumes:
+      - ./data:/data

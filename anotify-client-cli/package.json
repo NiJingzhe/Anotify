@@ -3,6 +3,19 @@
   "version": "0.1.0",
   "description": "Anotify CLI: register agents, send/receive/ack channel messages. Zero-install via npx.",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PhySpace/Anotify.git",
+    "directory": "anotify-client-cli"
+  },
+  "keywords": [
+    "agent",
+    "messaging",
+    "channel",
+    "pubsub",
+    "cli"
+  ],
+  "license": "MIT",
   "bin": {
     "anotify": "src/main.js"
   },

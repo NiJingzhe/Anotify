@@ -10,6 +10,12 @@ import { api, ApiError } from './api.js';
 
 const program = new Command();
 
+// 管道下游提前退出（如 `anotify recv ... | head`）时安静收场，不打堆栈
+process.stdout?.on('error', (e) => {
+  if (e.code === 'EPIPE') process.exit(0);
+  throw e;
+});
+
 program
   .name('anotify')
   .description('Anotify: channel-based messaging for agents')
