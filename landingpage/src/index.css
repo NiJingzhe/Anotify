@@ -1,0 +1,191 @@
+:root {
+  --serif: 'Playfair Display', Georgia, 'Times New Roman', serif;
+  --ink: #fff8f3;
+  --ink-soft: rgba(255, 248, 243, 0.78);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--serif);
+  color: var(--ink);
+  background: #1a1023; /* shader 加载前的兜底底色 */
+  overflow: hidden;
+}
+
+.page {
+  position: relative;
+  height: 100%;
+}
+
+.bg-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.overlay {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  padding: 2rem;
+  text-align: center;
+}
+
+.overline {
+  margin: 0;
+  font-style: italic;
+  font-weight: 400;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  font-size: clamp(0.65rem, 1.4vw, 0.85rem);
+  color: var(--ink-soft);
+  text-shadow: 0 1px 14px rgba(30, 8, 40, 0.45);
+}
+
+.title {
+  margin: 0;
+  font-weight: 700;
+  font-size: clamp(4rem, 13vw, 9.5rem);
+  line-height: 1.02;
+  letter-spacing: 0.01em;
+  text-shadow: 0 2px 30px rgba(30, 8, 40, 0.5);
+}
+
+.tagline {
+  margin: 0.4rem 0 0;
+  font-size: clamp(1.05rem, 2.4vw, 1.5rem);
+  font-weight: 500;
+  color: var(--ink-soft);
+  text-shadow: 0 1px 14px rgba(30, 8, 40, 0.45);
+}
+
+.tagline em {
+  font-style: italic;
+  color: var(--ink);
+}
+
+/* ---------- copy 卡片 ---------- */
+
+.copy-card {
+  margin-top: clamp(1.6rem, 4vh, 2.8rem);
+  width: min(680px, 92vw);
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.copy-label {
+  margin: 0;
+  font-style: italic;
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+}
+
+.copy-box {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  width: 100%;
+  padding: 0.9rem 1.1rem;
+  font-family: var(--serif);
+  cursor: pointer;
+  text-align: left;
+  color: var(--ink);
+  background: rgba(24, 10, 30, 0.34);
+  border: 1px solid rgba(255, 248, 243, 0.28);
+  border-radius: 14px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 10px 40px rgba(30, 8, 40, 0.25);
+  transition: border-color 0.2s ease, transform 0.15s ease;
+}
+
+.copy-box:hover {
+  border-color: rgba(255, 248, 243, 0.55);
+  transform: translateY(-1px);
+}
+
+.copy-box:active {
+  transform: translateY(0);
+}
+
+.copy-box code {
+  flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: clamp(0.72rem, 1.6vw, 0.88rem);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.copy-hint {
+  flex-shrink: 0;
+  font-style: italic;
+  font-size: 0.9rem;
+  letter-spacing: 0.08em;
+  opacity: 0.75;
+  border: 1px solid rgba(255, 248, 243, 0.4);
+  border-radius: 999px;
+  padding: 0.18rem 0.75rem;
+  transition: opacity 0.2s ease, background 0.2s ease;
+}
+
+.copy-hint.is-copied {
+  opacity: 1;
+  background: rgba(255, 248, 243, 0.18);
+}
+
+/* ---------- footer ---------- */
+
+.footer {
+  position: absolute;
+  bottom: 1.4rem;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  font-size: 0.9rem;
+  font-style: italic;
+  color: var(--ink-soft);
+  text-shadow: 0 1px 10px rgba(30, 8, 40, 0.45);
+}
+
+.footer a {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(255, 248, 243, 0.35);
+}
+
+.footer a:hover {
+  border-bottom-color: rgba(255, 248, 243, 0.8);
+}
+
+.footer code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  font-style: normal;
+}
+
+.dot {
+  opacity: 0.6;
+}
