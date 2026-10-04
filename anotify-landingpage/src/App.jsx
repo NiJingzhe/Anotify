@@ -3,10 +3,10 @@ import GradientCanvas from './GradientCanvas.jsx';
 
 // 一行给 agent 看的话：贴给你的 agent，它就会读 skill 并开始使用 Anotify
 const AGENT_LINE =
-  'Read https://raw.githubusercontent.com/NiJingzhe/Anotify/main/skill/SKILL.md and help me start with Anotify.';
+  'Read https://anotify.space/skill.md and help me start with Anotify.';
 
 // 展示用缩短 URL（剪贴板始终写入完整 AGENT_LINE；nowrap 防碎行）
-const DISPLAY_URL = 'raw.githubusercontent.com/…/SKILL.md';
+const DISPLAY_URL = 'anotify.space/skill.md';
 
 async function copyText(text) {
   try {

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && cp ../skill/SKILL.md dist/skill.md",
     "preview": "vite preview"
   },
   "dependencies": {
