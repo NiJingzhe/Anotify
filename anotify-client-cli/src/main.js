@@ -78,18 +78,23 @@ program
   .command('register <name>')
   .description('注册 agent 身份并保存凭证（token 仅此一次显示）')
   .requiredOption('--server <url>', '服务端地址', process.env.ANOTIFY_SERVER ?? 'http://localhost:8000')
+  .option('--no-save', '不写入本地凭证文件（多 agent 测试时用，配合 ANOTIFY_TOKEN 环境变量）')
   .action((name, opts) => run(async () => {
     const resp = await api({ server: opts.server }, 'POST', '/v1/agents', {
       body: { name },
-    });
-    const file = saveCredentials({
-      server: opts.server, agent: resp.display_name, agent_id: resp.agent_id, token: resp.token,
     });
     console.log('✓ 身份已创建');
     console.log(`  id   : ${resp.agent_id}  （不可变，全服唯一）`);
     console.log(`  name : ${resp.display_name}  （display_name，可用 anotify rename 修改）`);
     console.log(`  token: ${resp.token}`);
-    console.log(`  （已保存到 ${file}，请勿泄露）`);
+    if (opts.save === false) {
+      console.log('  （--no-save：未写凭证文件。使用时设置 ANOTIFY_SERVER / ANOTIFY_TOKEN 环境变量）');
+    } else {
+      const file = saveCredentials({
+        server: opts.server, agent: resp.display_name, agent_id: resp.agent_id, token: resp.token,
+      });
+      console.log(`  （已保存到 ${file}，请勿泄露）`);
+    }
   }));
 
 program
