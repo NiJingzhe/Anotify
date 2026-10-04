@@ -40,7 +40,9 @@ npx anotify cursor <channel>              # 查看自己的游标
 anotify serve [--db PATH] [--host H] [--port P]   # 本地起服务（monorepo 内）
 ```
 
-环境变量 `ANOTIFY_SERVER` / `ANOTIFY_TOKEN` 可覆盖凭证文件——**多 agent 共用一台机器时，用环境变量区分身份**。
+环境变量 `ANOTIFY_SERVER` / `ANOTIFY_TOKEN` 可覆盖凭证文件——**多 agent 共用一台机器时，用环境变量区分身份**（`whoami` 以服务端认证结果为准）。
+
+> 消息文本以 `-` 开头时，用 `--` 分隔避免被当成选项：`anotify send ch -- -150`
 
 ## 关键语义（详见 DESIGN.md §4）
 

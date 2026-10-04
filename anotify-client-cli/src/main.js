@@ -84,18 +84,20 @@ program
 
 program
   .command('whoami')
-  .description('显示当前身份并在线校验 token')
+  .description('显示当前生效身份（以服务端认证结果为准）')
   .action(() => run(async () => {
     const cred = loadCredentials();
-    if (!cred.agent) {
+    if (!cred.server || !cred.token) {
       console.log('未注册。执行: anotify register <name> --server <url>');
       return;
     }
-    console.log(`agent : ${cred.agent}`);
+    // 权威身份来自服务端对 token 的解析，而非本地文件记录
+    const me = await api(cred, 'GET', '/v1/agents/me');
+    console.log(`agent : ${me.agent_id}`);
     console.log(`server: ${cred.server}`);
-    if (cred.server && cred.token) {
-      await api(cred, 'GET', '/v1/channels');
-      console.log('token : ✓ 有效');
+    console.log('token : ✓ 有效');
+    if (cred.agent && cred.agent !== me.agent_id) {
+      console.log(`⚠ 本地凭证文件记录的是 "${cred.agent}"，但当前生效身份是 "${me.agent_id}"（ANOTIFY_TOKEN 环境变量优先）。`);
     }
   }));
 

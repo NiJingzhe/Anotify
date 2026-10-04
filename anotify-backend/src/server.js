@@ -46,6 +46,9 @@ v1.post('/agents', async (c) => {
 const authed = new Hono();
 authed.use('*', requireAuth(store));
 
+// GET /v1/agents/me —— 当前认证身份（whoami / 多 agent 共机调试用）
+authed.get('/agents/me', (c) => c.json({ agent_id: c.get('agent') }));
+
 // POST /v1/channels —— 创建频道（§6.2）
 authed.post('/channels', async (c) => {
   const body = await parseJson(c);
