@@ -1,8 +1,10 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 
-// 弥散渐变（diffuse gradient）shader：fbm 域扭曲 + 多个高斯色斑缓动漂移，
-// 多巴胺色调（热粉 / 珊瑚橙 / 柠檬黄 / 青柠 / 湖水青 / 紫罗兰）
+// 弥散渐变（diffuse gradient）shader：fbm 域扭曲 + 多个高斯色斑漂移，
+// 多巴胺色调（热粉 / 珊瑚橙 / 柠檬黄 / 青柠 / 湖水青 / 紫罗兰）。
+// 混色策略：screen 混合（重叠处变亮变艳）+ 饱和度自适应补偿（不往灰塌），
+// 每斑异速运动 + 相邻调色板色慢速轮换，保证长时间观看也有明显变化。
 const vertexShader = /* glsl */ `
   void main() {
     gl_Position = vec4(position, 1.0);
@@ -43,17 +45,29 @@ const fragmentShader = /* glsl */ `
     return v;
   }
 
-  // 高斯衰减的柔边色斑
-  vec3 blob(vec2 p, vec2 center, float radius, vec3 color) {
-    float d = distance(p, center);
-    return color * exp(-(d * d) / (radius * radius));
+  // 多巴胺调色板：全部高饱和
+  vec3 pal(int i) {
+    if (i == 0) return vec3(1.00, 0.29, 0.59); // hot pink
+    if (i == 1) return vec3(1.00, 0.50, 0.12); // coral orange
+    if (i == 2) return vec3(0.55, 0.95, 0.18); // lime
+    if (i == 3) return vec3(0.10, 0.88, 0.80); // teal
+    if (i == 4) return vec3(0.52, 0.30, 1.00); // violet
+    return vec3(1.00, 0.82, 0.16);             // lemon
+  }
+
+  vec3 screenBlend(vec3 base, vec3 c) {
+    return 1.0 - (1.0 - base) * (1.0 - clamp(c, 0.0, 1.0));
   }
 
   void main() {
     vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution) / min(u_resolution.x, u_resolution.y);
-    float t = u_time * 0.12;
 
-    // fbm 域扭曲：让色斑边界呈现"弥散"感而非干净的圆
+    // 提速 2~3x：10 秒内肉眼可见的位置与构图变化
+    float t = u_time * 0.26;
+    // 慢速整体色相漂移（ping-pong，无跳变）
+    float hueT = u_time * 0.02;
+
+    // fbm 域扭曲：色斑边界呈现"弥散"感而非干净的圆
     vec2 warp = vec2(
       fbm(uv * 1.6 + t * 0.35),
       fbm(uv * 1.6 - t * 0.28 + 5.2)
@@ -61,25 +75,40 @@ const fragmentShader = /* glsl */ `
     vec2 p = uv + 0.38 * warp;
 
     vec3 col = vec3(0.0);
-    col += blob(p, vec2(sin(t * 0.90) * 0.55,       cos(t * 0.70) * 0.38),      0.85, vec3(1.00, 0.29, 0.59)); // hot pink
-    col += blob(p, vec2(cos(t * 0.60) * 0.62,       sin(t * 0.80) * 0.46 + 0.08), 0.80, vec3(1.00, 0.54, 0.16)); // coral
-    col += blob(p, vec2(sin(t * 0.75 + 2.0) * 0.66, cos(t * 0.50 + 1.0) * 0.42), 0.75, vec3(0.58, 0.92, 0.25)); // lime
-    col += blob(p, vec2(cos(t * 0.50 + 4.0) * 0.52, sin(t * 0.85 + 3.0) * 0.50), 0.72, vec3(0.16, 0.85, 0.82)); // teal
-    col += blob(p, vec2(sin(t * 0.65 + 5.5) * 0.46, sin(t * 0.60 + 2.5) * 0.55), 0.80, vec3(0.55, 0.33, 1.00)); // violet
-    col += blob(p, vec2(cos(t * 0.80 + 1.5) * 0.40, cos(t * 0.45 + 4.5) * 0.52), 0.62, vec3(1.00, 0.83, 0.20)); // lemon
+    for (int i = 0; i < 6; i++) {
+      float fi = float(i);
+      // 各斑速度/相位/半径不同 → 相对位置持续换牌，不呈现刚性旋转
+      vec2 center = vec2(
+        sin(t * (0.70 + 0.13 * fi) + fi * 1.7) * (0.34 + 0.05 * fi),
+        cos(t * (0.90 - 0.11 * fi) + fi * 2.3) * (0.30 + 0.06 * fi)
+      );
+      float radius = 0.78 + 0.10 * sin(fi * 2.1 + t * 0.55);
+      vec2 d = p - center;
+      float w = exp(-dot(d, d) / (radius * radius));
+      // 色斑 i 在 pal(i) 与 pal(i+1) 间慢速往返 → 色相缓慢漂移
+      float f = abs(fract(hueT + fi / 6.0) * 2.0 - 1.0);
+      int j = (i + 1 == 6) ? 0 : (i + 1);
+      vec3 c = mix(pal(i), pal(j), smoothstep(0.0, 1.0, f));
+      // screen 混合：重叠处变亮变艳，而非平均后发闷
+      col = screenBlend(col, c * w);
+    }
 
-    // 柔和 tonemap + gamma 提亮，保留多巴胺的饱和度但不出硬块
-    col = col / (1.0 + col);
-    col = pow(col, vec3(0.82));
+    // 饱和度自适应补偿：越接近灰补得越狠，保证任意时刻画面保持高饱和主导
+    float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
+    float mx = max(col.r, max(col.g, col.b));
+    float mn = min(col.r, min(col.g, col.b));
+    float sat = (mx - mn) / max(mx, 1e-4);
+    float boost = mix(1.75, 1.12, smoothstep(0.05, 0.70, sat));
+    col = max(mix(vec3(luma), col, boost), 0.0);
 
-    // 极轻的暗角，给衬线标题让一点对比度
-    col *= 1.0 - 0.22 * dot(uv, uv);
+    col = pow(col, vec3(0.90));       // 轻微提亮
+    col *= 1.0 - 0.20 * dot(uv, uv);  // 极轻暗角，给衬线标题让对比度
 
     // 细颗粒，避免大面积渐变的色带
     float grain = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233)) + u_time * 60.0) * 43758.5453);
     col += (grain - 0.5) * 0.035;
 
-    gl_FragColor = vec4(col, 1.0);
+    gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
   }
 `;
 
