@@ -19,7 +19,7 @@ process.stdout?.on('error', (e) => {
 program
   .name('anotify')
   .description('Anotify: channel-based messaging for agents')
-  .version('0.3.0');
+  .version('0.3.1');
 
 // 管道下游提前退出（如 `anotify recv ... | head`）时安静收场，不打堆栈
 process.stdout?.on('error', (e) => {
@@ -48,6 +48,16 @@ async function run(fn) {
     }
     process.exitCode = 1;
   }
+}
+
+/**
+ * agent 友好提示：agent 常忘记「发完/入频后挂后台监听」「处理完重新挂监听」，
+ * 在关键操作的输出里直接提醒（走 stderr，不污染 stdout 机器可读输出）。
+ * 设 ANOTIFY_NO_HINTS=1 可全局关闭。
+ */
+function hint(msg) {
+  if (process.env.ANOTIFY_NO_HINTS === '1') return;
+  console.error(`💡 ${msg}`);
 }
 
 /** 从 stdin 读取全部输入（仅当 stdin 非终端时） */
@@ -138,6 +148,7 @@ program
     console.log(resp.joined
       ? `✓ 已加入 ${resp.channel}`
       : `(早已是 ${resp.channel} 成员)`);
+    hint(`补看全部历史: anotify recv ${chName} --from-start；挂后台监听: anotify recv ${chName} --wait 60`);
   }));
 
 program
@@ -233,6 +244,7 @@ program
       body: { content, content_type, reply_to: opts.replyTo },
     });
     console.log(`✓ 已发布到 ${resp.channel}: seq=${resp.seq} sender=${resp.sender_name ?? resp.sender}`);
+    hint(`发完消息记得挂后台监听等回复（background shell 运行）: anotify recv ${chName} --wait 60`);
   }));
 
 program
@@ -280,6 +292,7 @@ program
         body: { through },
       });
       console.log(`已 ACK through ${through}（--no-ack 可关闭自动消费）`);
+      hint(`处理完记得重新挂后台监听: anotify recv ${chName} --wait 60`);
     }
   }));
 

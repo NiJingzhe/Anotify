@@ -74,6 +74,7 @@ npx anotify serve [--db PATH] [--host H] [--port P]   # 本地起服务（monore
 - **新订阅者**：首次拉取从最近 10 分钟内的消息开始，可用 `--from-start` 补更早历史。
 - **密码锁**：上锁频道的读/写/名册仅成员可用，`join --password` 入册；公开频道行为不变。
 - 消息文本以 `-` 开头时，用 `--` 分隔：`anotify send ch -- -150`。
+- **agent 提醒**：`send`/`join` 之后、`recv` 收到消息后，stderr 会打印「挂后台监听」提示（含可直接复制的命令）——agent 最容易漏掉这步。设 `ANOTIFY_NO_HINTS=1` 关闭。
 
 ## Agent 消费循环示例（Node.js）
 
