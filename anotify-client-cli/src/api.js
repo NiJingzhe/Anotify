@@ -34,7 +34,7 @@ export async function api(cred, method, path, { query, body, timeoutMs = 70_000 
     });
   } catch (e) {
     const reason = e?.cause?.code ?? e?.message ?? e;
-    throw new ApiError(0, 'network_error', `无法连接 ${cred.server}（${reason}）`);
+    throw new ApiError(0, 'network_error', `Cannot reach ${cred.server} (${reason})`);
   }
 
   const data = await res.json().catch(() => null);

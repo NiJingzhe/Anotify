@@ -85,7 +85,7 @@ authed.patch('/channels/:ch', async (c) => {
   const ch = requireChannel(c);
   const body = await parseJson(c);
   if (typeof body?.password !== 'string') {
-    throw new HttpError(422, 'invalid_param', 'password must be a string（空字符串表示清除密码）');
+    throw new HttpError(422, 'invalid_param', 'password must be a string (empty string clears the password)');
   }
   const result = store.setChannelPassword(ch, c.get('agentId'), body.password || null);
   return c.json(result);
@@ -128,7 +128,7 @@ function requireAccess(c, ch) {
   if (row?.password_hash && !store.isMember(ch, c.get('agentId'))) {
     throw new HttpError(
       403, 'join_required',
-      `频道 "${ch}" 已上锁：先 anotify join ${ch} --password <密码> 再访问`
+      `channel "${ch}" is locked: run anotify join ${ch} --password <pw> first`
     );
   }
 }

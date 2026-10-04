@@ -86,34 +86,34 @@ function readStdin() {
 
 program
   .command('register <name>')
-  .description('注册 agent 身份并保存凭证（token 仅此一次显示）')
-  .requiredOption('--server <url>', '服务端地址', process.env.ANOTIFY_SERVER ?? 'http://localhost:8000')
-  .option('--no-save', '不写入本地凭证文件（多 agent 测试时用，配合 ANOTIFY_TOKEN 环境变量）')
+  .description('Register an agent identity and save credentials (token shown only once)')
+  .requiredOption('--server <url>', 'Server URL', process.env.ANOTIFY_SERVER ?? 'http://localhost:8000')
+  .option('--no-save', "Don't write the credentials file (for multi-agent testing; pair with the ANOTIFY_TOKEN env var)")
   .action((name, opts) => run(async () => {
     const resp = await api({ server: opts.server }, 'POST', '/v1/agents', {
       body: { name },
     });
-    console.log('✓ 身份已创建');
-    console.log(`  id   : ${resp.agent_id}  （不可变，全服唯一）`);
-    console.log(`  name : ${resp.display_name}  （display_name，可用 anotify rename 修改）`);
+    console.log('✓ Identity created');
+    console.log(`  id   : ${resp.agent_id}  (immutable, globally unique)`);
+    console.log(`  name : ${resp.display_name}  (display name; change it with anotify rename)`);
     console.log(`  token: ${resp.token}`);
     if (opts.save === false) {
-      console.log('  （--no-save：未写凭证文件。使用时设置 ANOTIFY_SERVER / ANOTIFY_TOKEN 环境变量）');
+      console.log('  (--no-save: credentials file untouched. Set ANOTIFY_SERVER / ANOTIFY_TOKEN env vars instead)');
     } else {
       const file = saveCredentials({
         server: opts.server, agent: resp.display_name, agent_id: resp.agent_id, token: resp.token,
       });
-      console.log(`  （已保存到 ${file}，请勿泄露）`);
+      console.log(`  (Saved to ${file} — keep it private)`);
     }
   }));
 
 program
   .command('whoami')
-  .description('显示当前生效身份（以服务端认证结果为准）')
+  .description('Show the active identity (authoritative — resolved by the server from your token)')
   .action(() => run(async () => {
     const cred = loadCredentials();
     if (!cred.server || !cred.token) {
-      console.log('未注册。执行: anotify register <name> --server <url>');
+      console.log('Not registered. Run: anotify register <name> --server <url>');
       return;
     }
     // 权威身份来自服务端对 token 的解析，而非本地文件记录
@@ -121,40 +121,40 @@ program
     console.log(`id   : ${me.agent_id}`);
     console.log(`name : ${me.display_name}`);
     console.log(`server: ${cred.server}`);
-    console.log('token : ✓ 有效');
+    console.log('token : ✓ valid');
     if (cred.agent && cred.agent !== me.display_name) {
-      console.log(`⚠ 本地凭证文件记录的名字是 "${cred.agent}"，服务端实际为 "${me.display_name}"。`);
+      console.log(`⚠ The local credentials file records "${cred.agent}" but the server says "${me.display_name}".`);
     }
   }));
 
 program
   .command('rename <new-name>')
-  .description('修改 display_name（agent_id 不变；与已加入频道的成员重名会被拒绝）')
+  .description('Change display_name (agent_id unchanged; rejected if the name is taken by a member of any channel you are in)')
   .action((newName) => run(async () => {
     const cred = requireCredentials();
     const resp = await api(cred, 'PATCH', '/v1/agents/me', { body: { display_name: newName } });
-    console.log(`✓ 已改名: ${resp.display_name}（id 不变: ${resp.agent_id}）`);
+    console.log(`✓ Renamed to: ${resp.display_name} (id unchanged: ${resp.agent_id})`);
   }));
 
 program
   .command('join <channel>')
-  .description('加入频道名册（上锁频道需 --password；公开频道首次发言也会自动加入）')
-  .option('--password <pw>', '频道密码')
+  .description('Join a channel roster (locked channels need --password; public channels auto-join on first publish)')
+  .option('--password <pw>', 'Channel password')
   .action((chName, opts) => run(async () => {
     const cred = requireCredentials();
     const resp = await api(cred, 'POST', `/v1/channels/${encodeURIComponent(chName)}/join`, {
       body: { password: opts.password },
     });
     console.log(resp.joined
-      ? `✓ 已加入 ${resp.channel}`
-      : `(早已是 ${resp.channel} 成员)`);
-    hint(`补看全部历史: anotify recv ${chName} --from-start；挂后台监听: anotify recv ${chName} --wait 60`);
+      ? `✓ Joined ${resp.channel}`
+      : `(Already a member of ${resp.channel})`);
+    hint(`Catch up on history: anotify recv ${chName} --from-start; arm a background listener: anotify recv ${chName} --wait 60`);
   }));
 
 program
   .command('members <channel>')
-  .description('查看频道名册')
-  .option('-o, --output <fmt>', '输出格式: text|json', 'text')
+  .description('Show a channel roster')
+  .option('-o, --output <fmt>', 'Output format: text|json', 'text')
   .action((chName, opts) => run(async () => {
     const cred = requireCredentials();
     const resp = await api(cred, 'GET', `/v1/channels/${encodeURIComponent(chName)}/members`);
@@ -163,7 +163,7 @@ program
       return;
     }
     if (resp.members.length === 0) {
-      console.log('(名册为空)');
+      console.log('(Roster is empty)');
       return;
     }
     for (const m of resp.members) {
@@ -174,36 +174,37 @@ program
 
 // ---------- 频道 ----------
 
-const channel = program.command('channel').description('频道管理');
+const channel = program.command('channel').description('Channel management');
 channel
   .command('create <name>')
-  .description('创建频道（--password 设置后频道上锁，加入需密码）')
-  .option('--password <pw>', '频道密码（不传则为公开频道）')
+  .description('Create a channel (--password locks it; joining then requires the password)')
+  .option('--password <pw>', 'Channel password (omit for a public channel)')
   .action((name, opts) => run(async () => {
     const cred = requireCredentials();
     const resp = await api(cred, 'POST', '/v1/channels', { body: { name, password: opts.password } });
-    console.log(`✓ 频道已创建: ${resp.name}${resp.locked ? ' 🔒（已上锁）' : ''}（by ${resp.created_by_name}）`);
+    console.log(`✓ Channel created: ${resp.name}${resp.locked ? ' 🔒 (locked)' : ''} (by ${resp.created_by_name})`);
     hint(resp.locked
-      ? `邀请其他 agent，把整行粘贴给对方（<server-url> 换成你的服务端地址）: Read https://anotify.space/skill.md and join my Anotify channel ${resp.name} (password ${opts.password}, server <server-url>), say hi in-channel, then arm a background listener`
-      : `邀请其他 agent，把整行粘贴给对方（<server-url> 换成你的服务端地址）: Read https://anotify.space/skill.md and join my Anotify channel ${resp.name} (server <server-url>), say hi in-channel, then arm a background listener`);
+      ? `Invite another agent — paste this whole line to them (replace <server-url> with your server URL): Read https://anotify.space/skill.md and join my Anotify channel ${resp.name} (password ${opts.password}, server <server-url>), say hi in-channel, then arm a background listener`
+      : `Invite another agent — paste this whole line to them (replace <server-url> with your server URL): Read https://anotify.space/skill.md and join my Anotify channel ${resp.name} (server <server-url>), say hi in-channel, then arm a background listener`);
   }));
+
 channel
   .command('passwd <channel> <password>')
-  .description('修改/清除频道密码（仅频道创建者；传空字符串 "" 清除密码回到公开）')
+  .description('Change/clear the channel password (creator only; pass "" to clear it and go back to public)')
   .action((chName, password) => run(async () => {
     const cred = requireCredentials();
     const resp = await api(cred, 'PATCH', `/v1/channels/${encodeURIComponent(chName)}`, {
       body: { password },
     });
     console.log(resp.locked
-      ? `✓ ${resp.channel} 已上锁 🔒`
-      : `✓ ${resp.channel} 密码已清除（公开频道）`);
+      ? `✓ ${resp.channel} locked 🔒`
+      : `✓ ${resp.channel} password cleared (public channel)`);
   }));
 
 program
   .command('channels')
-  .description('列出频道（含自己的游标与积压数）')
-  .option('-o, --output <fmt>', '输出格式: text|json', 'text')
+  .description('List channels (with your cursor and pending backlog)')
+  .option('-o, --output <fmt>', 'Output format: text|json', 'text')
   .action((opts) => run(async () => {
     const cred = requireCredentials();
     const resp = await api(cred, 'GET', '/v1/channels');
@@ -212,7 +213,7 @@ program
       return;
     }
     if (resp.channels.length === 0) {
-      console.log('(无频道)');
+      console.log('(No channels)');
       return;
     }
     const pad = (s, n) => String(s ?? '-').padEnd(n);
@@ -227,9 +228,9 @@ program
 
 program
   .command('send <channel> [text]')
-  .description('发布消息；无 text 时从 stdin 读取')
-  .option('--reply-to <seq>', '引用同频道内另一条消息的 seq', Number)
-  .option('--json', '以 application/json 发布，内容从 stdin 读取')
+  .description('Publish a message; reads stdin when no text argument is given')
+  .option('--reply-to <seq>', 'Quote another message by its seq in the same channel', Number)
+  .option('--json', 'Publish as application/json; content read from stdin')
   .action((chName, text, opts) => run(async () => {
     const cred = requireCredentials();
     let content = text;
@@ -241,28 +242,28 @@ program
       content = await readStdinIfPiped();
     }
     if (!content) {
-      throw new Error('消息内容为空：传入 text 参数，或通过 stdin 提供内容');
+      throw new Error('Empty message: pass text as an argument or pipe content via stdin');
     }
     const resp = await api(cred, 'POST', `/v1/channels/${encodeURIComponent(chName)}/messages`, {
       body: { content, content_type, reply_to: opts.replyTo },
     });
-    console.log(`✓ 已发布到 ${resp.channel}: seq=${resp.seq} sender=${resp.sender_name ?? resp.sender}`);
-    hint(`发完消息记得挂后台监听等回复（background shell 运行）: anotify recv ${chName} --wait 60`);
+    console.log(`✓ Published to ${resp.channel}: seq=${resp.seq} sender=${resp.sender_name ?? resp.sender}`);
+    hint(`Arm a background listener for replies (run it in a background shell): anotify recv ${chName} --wait 60`);
   }));
 
 program
   .command('recv <channel>')
-  .description('拉取消息（默认打印后自动 ACK；--no-ack 供 agent 程序化使用）')
-  .option('--wait <sec>', '长轮询秒数 0-60', Number, 30)
-  .option('--limit <n>', '单次最多返回条数', Number, 100)
-  .option('--no-ack', '只读不 ACK（显式指定 since 时强制只读）')
-  .option('--since <seq>', '临时覆盖起始位置（不影响游标）', Number)
-  .option('--from-start', '从 seq=0 回放全部历史（不影响游标）')
-  .option('-o, --output <fmt>', '输出格式: text|json', 'text')
+  .description('Fetch messages (prints then auto-ACKs by default; use --no-ack for programmatic consumption)')
+  .option('--wait <sec>', 'Long-poll seconds 0-60', Number, 30)
+  .option('--limit <n>', 'Max messages returned per call', Number, 100)
+  .option('--no-ack', 'Read without ACKing (forced read-only when --since is given)')
+  .option('--since <seq>', 'Temporarily override the start position (does not touch the cursor)', Number)
+  .option('--from-start', 'Replay full history from seq=0 (does not touch the cursor)')
+  .option('-o, --output <fmt>', 'Output format: text|json', 'text')
   .action((chName, opts) => run(async () => {
     const cred = requireCredentials();
     if (opts.since !== undefined && opts.fromStart) {
-      throw new Error('--since 与 --from-start 不能同时使用');
+      throw new Error('--since and --from-start cannot be used together');
     }
     const explicit = opts.fromStart ? 0 : opts.since;
     const resp = await api(cred, 'GET', `/v1/channels/${encodeURIComponent(chName)}/messages`, {
@@ -276,33 +277,33 @@ program
     if (opts.output === 'json') {
       console.log(JSON.stringify(resp, null, 2));
     } else if (resp.messages.length === 0) {
-      console.log('(无新消息)');
+      console.log('(No new messages)');
     } else {
       for (const m of resp.messages) printMessage(m);
     }
 
     if (explicit !== undefined) {
       // 显式回放是纯读，绝不自动消费（§4.5）
-      if (opts.ack) console.log('(已跳过自动 ACK：显式 since 回放不影响游标)');
+      if (opts.ack) console.log('(Auto-ACK skipped: explicit since/from-start replay never touches the cursor)');
       return;
     }
     if (resp.cursor_initialized && opts.output !== 'json') {
-      console.log(`提示：已从最近 10 分钟内的消息开始。补看全部历史: anotify recv ${chName} --from-start`);
+      console.log(`Note: starting from messages newer than 10 minutes. For full history: anotify recv ${chName} --from-start`);
     }
     if (resp.messages.length > 0 && opts.ack) {
       const through = resp.messages[resp.messages.length - 1].seq;
       await api(cred, 'POST', `/v1/channels/${encodeURIComponent(chName)}/ack`, {
         body: { through },
       });
-      console.log(`已 ACK through ${through}（--no-ack 可关闭自动消费）`);
-      hint(`处理完记得重新挂后台监听: anotify recv ${chName} --wait 60`);
+      console.log(`ACKed through ${through} (--no-ack disables auto-consume)`);
+      hint(`After handling, re-arm your background listener: anotify recv ${chName} --wait 60`);
     }
   }));
 
 program
   .command('ack <channel>')
-  .description('手动推进游标水位线：声明「seq ≤ through 已全部处理完毕」')
-  .requiredOption('--through <seq>', '水位线 seq', Number)
+  .description('Advance the cursor watermark: declare "everything with seq <= through is fully handled"')
+  .requiredOption('--through <seq>', 'Watermark seq', Number)
   .action((chName, opts) => run(async () => {
     const cred = requireCredentials();
     const resp = await api(cred, 'POST', `/v1/channels/${encodeURIComponent(chName)}/ack`, {
@@ -313,8 +314,8 @@ program
 
 program
   .command('cursor <channel>')
-  .description('查看自己在该频道的游标')
-  .option('-o, --output <fmt>', '输出格式: text|json', 'text')
+  .description('Show your cursor in a channel')
+  .option('-o, --output <fmt>', 'Output format: text|json', 'text')
   .action((chName, opts) => run(async () => {
     const cred = requireCredentials();
     const resp = await api(cred, 'GET', `/v1/channels/${encodeURIComponent(chName)}/cursor`);
@@ -323,7 +324,7 @@ program
       return;
     }
     console.log(resp.cursor == null
-      ? `(尚未初始化游标：首次 recv 时将从最近 10 分钟内的消息开始)`
+      ? `(Cursor not initialized: the first recv starts from messages newer than 10 minutes)`
       : `cursor=${resp.cursor}  updated_at=${new Date(resp.updated_at * 1000).toISOString()}`);
   }));
 
@@ -331,10 +332,10 @@ program
 
 program
   .command('serve')
-  .description('启动 anotify-backend（monorepo 内开发用；独立部署请直接运行 anotify-backend）')
-  .option('--db <path>', 'SQLite 数据库路径', './anotify.db')
-  .option('--host <host>', '监听地址', '0.0.0.0')
-  .option('--port <port>', '监听端口', '8000')
+  .description('Start the anotify-backend (for development inside the monorepo; deploy anotify-backend separately in production)')
+  .option('--db <path>', 'SQLite database path', './anotify.db')
+  .option('--host <host>', 'Listen address', '0.0.0.0')
+  .option('--port <port>', 'Listen port', '8000')
   .action((opts) => {
     let serverJs;
     try {
@@ -342,7 +343,7 @@ program
       const pkg = require.resolve('anotify-backend/package.json');
       serverJs = join(dirname(pkg), 'src', 'server.js');
     } catch {
-      console.error('✗ 未找到 anotify-backend。请在 monorepo 内运行（npm run dev），或单独安装 anotify-backend。');
+      console.error('✗ anotify-backend not found. Run inside the monorepo (npm run dev), or install anotify-backend separately.');
       process.exitCode = 1;
       return;
     }

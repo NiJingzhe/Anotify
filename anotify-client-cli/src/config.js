@@ -24,7 +24,7 @@ export function loadCredentials() {
 export function requireCredentials() {
   const cred = loadCredentials();
   if (!cred.server || !cred.token) {
-    throw new Error('未找到凭证。请先执行: anotify register <name> --server <url>');
+    throw new Error('No credentials found. Run first: anotify register <name> --server <url>');
   }
   return cred;
 }

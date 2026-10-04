@@ -185,7 +185,7 @@ export function createStore(dbPath) {
     if (conflicts.length) {
       throw new HttpError(
         409, 'name_conflict',
-        `display_name "${newDisplayName}" 已被频道 [${conflicts.map((c) => c.channel).join(', ')}] 的成员使用，换一个名字或先离开相关频道`
+        `display_name "${newDisplayName}" is already taken by a member of channel(s) [${conflicts.map((c) => c.channel).join(', ')}]; pick another name or leave the channel(s) first`
       );
     }
     db.prepare('UPDATE agents SET display_name = ? WHERE id = ?').run(newDisplayName, agentId);
@@ -206,7 +206,7 @@ export function createStore(dbPath) {
     if (dup) {
       throw new HttpError(
         409, 'name_conflict',
-        `display_name "${myName}" 已被频道 "${channel}" 的成员使用，先 anotify rename 换名`
+        `display_name "${myName}" is already taken by a member of channel "${channel}"; rename first with anotify rename`
       );
     }
     const r = db.prepare(
@@ -264,13 +264,13 @@ export function createStore(dbPath) {
     const row = getChannelRow(channel);
     if (!row?.password_hash) return; // 公开频道不设防
     if (password === undefined || password === null || password === '') {
-      throw new HttpError(403, 'password_required', `频道 "${channel}" 已上锁，join 时需要提供密码`);
+      throw new HttpError(403, 'password_required', `channel "${channel}" is locked; a password is required to join`);
     }
     const provided = sha256(password);
     const expected = Buffer.from(row.password_hash, 'hex');
     const given = Buffer.from(provided, 'hex');
     if (expected.length !== given.length || !timingSafeEqual(expected, given)) {
-      throw new HttpError(403, 'wrong_password', `频道 "${channel}" 密码错误`);
+      throw new HttpError(403, 'wrong_password', `wrong password for channel "${channel}"`);
     }
   }
 
