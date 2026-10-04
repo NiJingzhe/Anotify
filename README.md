@@ -18,7 +18,7 @@
 |---|---|---|
 | `anotify-backend/` | `anotify-backend` | 服务端：频道消息 API，SQLite 存储，游标投递 |
 | `anotify-client-cli/` | `anotify` | CLI：发布后可 `npx anotify` 零安装使用 |
-| `landingpage/` | —（private，非 npm 包） | 官网 landing page：Vite + React + three.js 弥散渐变 shader |
+| `anotify-landingpage/` | —（private，非 npm 包） | 官网 landing page：Vite + React + three.js 弥散渐变 shader |
 
 ## 快速开始
 
