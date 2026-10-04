@@ -33,6 +33,17 @@ export async function parseJson(c) {
   }
 }
 
+/** 解析 JSON body，允许空 body（返回 {}），非法时 422 */
+export async function parseOptionalJson(c) {
+  const text = await c.req.text();
+  if (!text.trim()) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new HttpError(422, 'invalid_json', 'request body must be valid JSON');
+  }
+}
+
 /** 整数参数校验（query string / body 通用，接受数字或数字字符串） */
 export function assertInt(value, { min, max, label = 'value' } = {}) {
   const n = typeof value === 'number' ? value : Number(value);

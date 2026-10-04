@@ -4,7 +4,7 @@ import { Hono } from 'hono';
 import { logger } from 'hono/logger';
 import { createStore } from './db.js';
 import { requireAuth } from './auth.js';
-import { HttpError, parseJson, assertName, assertInt, validateMessageBody } from './schemas.js';
+import { HttpError, parseJson, parseOptionalJson, assertName, assertInt, validateMessageBody } from './schemas.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -63,33 +63,48 @@ authed.patch('/agents/me', async (c) => {
   return c.json(result);
 });
 
-// POST /v1/channels —— 创建频道（§6.2）
+// POST /v1/channels —— 创建频道（§6.2），可选密码上锁；创建者自动入册
 authed.post('/channels', async (c) => {
   const body = await parseJson(c);
   const name = assertName(body?.name, 'name');
+  const password = typeof body?.password === 'string' && body.password.length > 0 ? body.password : undefined;
   const agentId = c.get('agentId');
-  const ch = store.createChannel(name, agentId);
-  // 创建者自动入册
+  const ch = store.createChannel(name, agentId, password);
   store.ensureMember(name, agentId);
   return c.json({
     name: ch.name,
+    locked: ch.locked,
     created_at: ch.created_at,
     created_by: ch.created_by,
     created_by_name: c.get('agentName'),
   }, 201);
 });
 
-// POST /v1/channels/:ch/join —— 显式加入频道名册（§3）
-authed.post('/channels/:ch/join', (c) => {
+// PATCH /v1/channels/:ch —— owner 修改/清除密码（§6.2）
+authed.patch('/channels/:ch', async (c) => {
   const ch = requireChannel(c);
+  const body = await parseJson(c);
+  if (typeof body?.password !== 'string') {
+    throw new HttpError(422, 'invalid_param', 'password must be a string（空字符串表示清除密码）');
+  }
+  const result = store.setChannelPassword(ch, c.get('agentId'), body.password || null);
+  return c.json(result);
+});
+
+// POST /v1/channels/:ch/join —— 入册（上锁频道需密码）
+authed.post('/channels/:ch/join', async (c) => {
+  const ch = requireChannel(c);
+  const body = await parseOptionalJson(c);
+  store.assertJoinAllowed(ch, body?.password);
   const agentId = c.get('agentId');
   const joined = store.ensureMember(ch, agentId);
   return c.json({ channel: ch, agent_id: agentId, joined });
 });
 
-// GET /v1/channels/:ch/members —— 频道名册
+// GET /v1/channels/:ch/members —— 频道名册（上锁频道仅成员可见）
 authed.get('/channels/:ch/members', (c) => {
   const ch = requireChannel(c);
+  requireAccess(c, ch);
   return c.json({ channel: ch, members: store.listMembers(ch) });
 });
 
@@ -107,9 +122,21 @@ function requireChannel(c) {
   return ch;
 }
 
-// POST /v1/channels/:ch/messages —— 发布消息（§6.3）：首次发言自动入册
+// 上锁频道的访问门：非成员一律 403（公开频道不设防，行为不变）
+function requireAccess(c, ch) {
+  const row = store.getChannelRow(ch);
+  if (row?.password_hash && !store.isMember(ch, c.get('agentId'))) {
+    throw new HttpError(
+      403, 'join_required',
+      `频道 "${ch}" 已上锁：先 anotify join ${ch} --password <密码> 再访问`
+    );
+  }
+}
+
+// POST /v1/channels/:ch/messages —— 发布消息（§6.3）：公开频道自动入册，上锁频道须先 join
 authed.post('/channels/:ch/messages', async (c) => {
   const ch = requireChannel(c);
+  requireAccess(c, ch);
   const agentId = c.get('agentId');
   const body = validateMessageBody(await parseJson(c));
   if (body.reply_to !== undefined && !store.hasMessage(ch, body.reply_to)) {
@@ -135,6 +162,7 @@ authed.post('/channels/:ch/messages', async (c) => {
 // GET /v1/channels/:ch/messages —— 拉取消息，支持长轮询（§6.4）
 authed.get('/channels/:ch/messages', async (c) => {
   const ch = requireChannel(c);
+  requireAccess(c, ch);
   const agentId = c.get('agentId');
   const q = c.req.query();
 
@@ -179,6 +207,7 @@ authed.post('/channels/:ch/ack', async (c) => {
 // GET /v1/channels/:ch/cursor —— 查看游标（§6.6）
 authed.get('/channels/:ch/cursor', (c) => {
   const ch = requireChannel(c);
+  requireAccess(c, ch);
   const agentId = c.get('agentId');
   const row = store.getCursorRow(ch, agentId);
   return c.json({

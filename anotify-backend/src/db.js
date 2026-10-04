@@ -5,6 +5,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { HttpError, sha256 } from './schemas.js';
+import { timingSafeEqual } from 'node:crypto';
 
 /** 游标初始化窗口：新订阅者可见最近 10 分钟内的消息（DESIGN §5） */
 const CURSOR_INIT_WINDOW_SECONDS = 600;
@@ -19,9 +20,10 @@ CREATE TABLE IF NOT EXISTS agents (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_token_hash ON agents(token_hash);
 
 CREATE TABLE IF NOT EXISTS channels (
-  name       TEXT PRIMARY KEY,
-  created_by TEXT NOT NULL,
-  created_at REAL NOT NULL
+  name          TEXT PRIMARY KEY,
+  created_by    TEXT NOT NULL,
+  password_hash TEXT,
+  created_at    REAL NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS channel_members (
@@ -113,6 +115,18 @@ function backfillRoster(db) {
   `);
 }
 
+/** 存量库补列：channels.password_hash（ALTER ADD COLUMN 幂等） */
+function migrateChannelPassword(db) {
+  const hasChannels = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='channels'"
+  ).get();
+  if (!hasChannels) return;
+  const cols = db.pragma('table_info(channels)');
+  if (!cols.some((c) => c.name === 'password_hash')) {
+    db.exec('ALTER TABLE channels ADD COLUMN password_hash TEXT');
+  }
+}
+
 export function createStore(dbPath) {
   mkdirSync(dirname(dbPath), { recursive: true });
   const db = new Database(dbPath);
@@ -120,6 +134,7 @@ export function createStore(dbPath) {
   db.pragma('busy_timeout = 5000');
 
   const migrated = migrateIdentityModel(db);
+  migrateChannelPassword(db);
   db.exec(SCHEMA);
   if (migrated) backfillRoster(db);
 
@@ -216,19 +231,57 @@ export function createStore(dbPath) {
     return !!db.prepare('SELECT 1 FROM channels WHERE name = ?').get(name);
   }
 
-  function createChannel(name, createdBy) {
+  function getChannelRow(name) {
+    return db.prepare('SELECT name, created_by, password_hash, created_at FROM channels WHERE name = ?')
+      .get(name);
+  }
+
+  function createChannel(name, createdBy, password) {
     if (hasChannel(name)) {
       throw new HttpError(409, 'channel_exists', `channel "${name}" already exists`);
     }
     const ts = now();
-    db.prepare('INSERT INTO channels (name, created_by, created_at) VALUES (?, ?, ?)')
-      .run(name, createdBy, ts);
-    return { name, created_by: createdBy, created_at: ts };
+    const password_hash = password ? sha256(password) : null;
+    db.prepare('INSERT INTO channels (name, created_by, password_hash, created_at) VALUES (?, ?, ?, ?)')
+      .run(name, createdBy, password_hash, ts);
+    return { name, created_by: createdBy, locked: !!password_hash, created_at: ts };
+  }
+
+  /** 仅 owner（创建者）可改/清除密码；清除即回到公开频道 */
+  function setChannelPassword(name, agentId, password) {
+    const row = getChannelRow(name);
+    if (!row) throw new HttpError(404, 'channel_not_found', `channel "${name}" does not exist`);
+    if (row.created_by !== agentId) {
+      throw new HttpError(403, 'not_owner', `only the channel owner can change its password`);
+    }
+    const hash = password ? sha256(password) : null;
+    db.prepare('UPDATE channels SET password_hash = ? WHERE name = ?').run(hash, name);
+    return { channel: name, locked: !!hash };
+  }
+
+  /** join / 发言的门禁：上锁频道必须验密后由路由显式入册（公开频道自动入册） */
+  function assertJoinAllowed(channel, password) {
+    const row = getChannelRow(channel);
+    if (!row?.password_hash) return; // 公开频道不设防
+    if (password === undefined || password === null || password === '') {
+      throw new HttpError(403, 'password_required', `频道 "${channel}" 已上锁，join 时需要提供密码`);
+    }
+    const provided = sha256(password);
+    const expected = Buffer.from(row.password_hash, 'hex');
+    const given = Buffer.from(provided, 'hex');
+    if (expected.length !== given.length || !timingSafeEqual(expected, given)) {
+      throw new HttpError(403, 'wrong_password', `频道 "${channel}" 密码错误`);
+    }
+  }
+
+  function isMember(channel, agentId) {
+    return !!db.prepare('SELECT 1 FROM channel_members WHERE channel = ? AND agent = ?')
+      .get(channel, agentId);
   }
 
   function listChannels(agentId) {
     const rows = db.prepare(`
-      SELECT c.name, c.created_at, c.created_by, ca.display_name AS created_by_name,
+      SELECT c.name, c.created_at, c.created_by, c.password_hash, ca.display_name AS created_by_name,
              (SELECT MAX(seq) FROM messages m WHERE m.channel = c.name) AS latest_seq,
              cu.cursor AS my_cursor
       FROM channels c
@@ -243,6 +296,7 @@ export function createStore(dbPath) {
         created_at: r.created_at,
         created_by: r.created_by,
         created_by_name: r.created_by_name ?? r.created_by,
+        locked: !!r.password_hash,
         latest_seq: latest,
         my_cursor: r.my_cursor ?? null,
         pending: r.my_cursor == null ? null : Math.max(0, latest - r.my_cursor),
@@ -336,7 +390,11 @@ export function createStore(dbPath) {
     ensureMember,
     listMembers,
     hasChannel,
+    getChannelRow,
     createChannel,
+    setChannelPassword,
+    assertJoinAllowed,
+    isMember,
     listChannels,
     latestSeq,
     hasMessage,

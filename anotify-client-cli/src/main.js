@@ -19,7 +19,7 @@ process.stdout?.on('error', (e) => {
 program
   .name('anotify')
   .description('Anotify: channel-based messaging for agents')
-  .version('0.2.0');
+  .version('0.3.0');
 
 // 管道下游提前退出（如 `anotify recv ... | head`）时安静收场，不打堆栈
 process.stdout?.on('error', (e) => {
@@ -123,10 +123,13 @@ program
 
 program
   .command('join <channel>')
-  .description('加入频道名册（首次发言也会自动加入）')
-  .action((chName) => run(async () => {
+  .description('加入频道名册（上锁频道需 --password；公开频道首次发言也会自动加入）')
+  .option('--password <pw>', '频道密码')
+  .action((chName, opts) => run(async () => {
     const cred = requireCredentials();
-    const resp = await api(cred, 'POST', `/v1/channels/${encodeURIComponent(chName)}/join`);
+    const resp = await api(cred, 'POST', `/v1/channels/${encodeURIComponent(chName)}/join`, {
+      body: { password: opts.password },
+    });
     console.log(resp.joined
       ? `✓ 已加入 ${resp.channel}`
       : `(早已是 ${resp.channel} 成员)`);
@@ -158,11 +161,24 @@ program
 const channel = program.command('channel').description('频道管理');
 channel
   .command('create <name>')
-  .description('创建频道（不会隐式创建，发送前需先创建）')
-  .action((name) => run(async () => {
+  .description('创建频道（--password 设置后频道上锁，加入需密码）')
+  .option('--password <pw>', '频道密码（不传则为公开频道）')
+  .action((name, opts) => run(async () => {
     const cred = requireCredentials();
-    const resp = await api(cred, 'POST', '/v1/channels', { body: { name } });
-    console.log(`✓ 频道已创建: ${resp.name}（by ${resp.created_by_name}）`);
+    const resp = await api(cred, 'POST', '/v1/channels', { body: { name, password: opts.password } });
+    console.log(`✓ 频道已创建: ${resp.name}${resp.locked ? ' 🔒（已上锁）' : ''}（by ${resp.created_by_name}）`);
+  }));
+channel
+  .command('passwd <channel> <password>')
+  .description('修改/清除频道密码（仅频道创建者；传空字符串 "" 清除密码回到公开）')
+  .action((chName, password) => run(async () => {
+    const cred = requireCredentials();
+    const resp = await api(cred, 'PATCH', `/v1/channels/${encodeURIComponent(chName)}`, {
+      body: { password },
+    });
+    console.log(resp.locked
+      ? `✓ ${resp.channel} 已上锁 🔒`
+      : `✓ ${resp.channel} 密码已清除（公开频道）`);
   }));
 
 program
@@ -183,7 +199,8 @@ program
     const pad = (s, n) => String(s ?? '-').padEnd(n);
     console.log(`${pad('CHANNEL', 20)}${pad('LATEST', 8)}${pad('CURSOR', 8)}${pad('PENDING', 8)}CREATED_BY`);
     for (const ch of resp.channels) {
-      console.log(`${pad(ch.name, 20)}${pad(ch.latest_seq, 8)}${pad(ch.my_cursor, 8)}${pad(ch.pending, 8)}${ch.created_by_name ?? ch.created_by}`);
+      const flag = ch.locked ? '🔒' : '  ';
+      console.log(`${pad(flag + ' ' + ch.name, 22)}${pad(ch.latest_seq, 8)}${pad(ch.my_cursor, 8)}${pad(ch.pending, 8)}${ch.created_by_name ?? ch.created_by}`);
     }
   }));
 
