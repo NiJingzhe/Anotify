@@ -57,6 +57,11 @@ CREATE TABLE IF NOT EXISTS files (
 );
 CREATE INDEX IF NOT EXISTS idx_files_channel ON files(channel);
 
+CREATE TABLE IF NOT EXISTS meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS cursors (
   channel    TEXT NOT NULL,
   agent      TEXT NOT NULL,
@@ -152,6 +157,11 @@ export function createStore(dbPath) {
   if (migrated) backfillRoster(db);
 
   const now = () => Date.now() / 1000;
+
+  // 实例 id：首次启动生成并持久化，让客户端识别「多个 URL 指向同一服务端」（DESIGN §13）
+  db.prepare('INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)')
+    .run('instance_id', 'srv_' + randomBytes(9).toString('base64url'));
+  const instanceId = db.prepare("SELECT value FROM meta WHERE key = 'instance_id'").get().value;
 
   // ---- agents ----
 
@@ -430,6 +440,7 @@ export function createStore(dbPath) {
 
   return {
     close: () => db.close(),
+    instanceId,
     createAgent,
     verifyAgent,
     getAgentRow,

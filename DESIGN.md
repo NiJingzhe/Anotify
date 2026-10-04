@@ -562,6 +562,7 @@ anotify download <ch> <seq> [-o path|-] [-f]                       # 按消息 s
 
 给人看的只读视图：本机**所有身份**（default + 全部 profiles + 环境变量身份）**已加入的全部频道**及其消息。
 
+- 服务端身份：同一服务端可能经由不同 URL 注册（域名 / IP）。公开接口 `GET /v1/info` 返回 `{instance_id, max_file_bytes}`，`instance_id` 首次启动生成并持久化在 `meta` 表；TUI 按它归并身份与频道（旧服务端退回按 URL）
 - 数据：对每个身份 `GET /v1/agents/me` + `GET /v1/channels`（用新增的 `joined` 字段过滤；旧服务端退回「有游标即视为已加入」）。频道按 `server + 名字` 去重，记录每个本机身份的游标与积压
 - **严格只读**：消息只用 `since` 读取（`GET /messages` 不带 `since` 会初始化游标，TUI 从不这样调用），从不 ACK——不干扰 agent 自己的 recv
 - 左栏：频道 → 其下各本机身份 `@cursor` 与 `+pending`；右栏：消息（日期分隔、`reply_to` 父消息一行摘要、文件消息、本机身份 ACK 水位线 `┄┄ X ACKed through #N ┄┄`），按发送者着色

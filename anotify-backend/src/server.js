@@ -59,6 +59,12 @@ v1.post('/agents', async (c) => {
   }, 201);
 });
 
+// GET /v1/info —— 服务端实例信息（§13）：instance_id 稳定不变，客户端据此合并指向同一服务端的不同 URL
+v1.get('/info', (c) => c.json({
+  instance_id: store.instanceId,
+  max_file_bytes: maxFileBytes,
+}));
+
 // ---------- 以下路由需要认证 ----------
 
 const authed = new Hono();

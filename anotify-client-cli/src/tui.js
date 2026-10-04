@@ -22,9 +22,20 @@ async function loadIdentities() {
       return { ...base, agent_id: p.agent_id || null, name: p.agent ?? p.profile, error: e.message };
     }
   }));
+  // 同一服务端可能经由不同 URL 注册（域名 / IP）：按 /v1/info 的 instance_id 归并，旧服务端退回 URL
+  const servers = [...new Set(resolved.map((id) => id.server))];
+  const instance = new Map(await Promise.all(servers.map(async (server) => {
+    try {
+      const info = await api({ server }, 'GET', '/v1/info', { timeoutMs: 10_000 });
+      return [server, info?.instance_id ?? server];
+    } catch {
+      return [server, server];
+    }
+  })));
+  for (const id of resolved) id.serverKey = instance.get(id.server);
   const seen = new Map();
   for (const id of resolved) {
-    const k = id.agent_id ? `${id.server}\t${id.agent_id}` : `${id.server}\t~${id.profile}`;
+    const k = id.agent_id ? `${id.serverKey}\t${id.agent_id}` : `${id.serverKey}\t~${id.profile}`;
     if (seen.has(k)) seen.get(k).aliases.push(id.profile);
     else seen.set(k, { ...id, aliases: [] });
   }
@@ -47,7 +58,7 @@ async function loadChannels(identities) {
       // 旧服务端没有 joined 字段：退回「有游标即视为在频道里」
       const joined = c.joined ?? c.my_cursor != null;
       if (!joined) continue;
-      const key = `${id.server}\t${c.name}`;
+      const key = `${id.serverKey}\t${c.name}`;
       if (!channels.has(key)) {
         channels.set(key, { key, server: id.server, name: c.name, locked: c.locked, latest_seq: c.latest_seq, locals: [] });
       }
@@ -56,7 +67,7 @@ async function loadChannels(identities) {
       ch.locals.push({ identity: id, cursor: c.my_cursor, pending: c.pending });
     }
   }));
-  return [...channels.values()].sort((a, b) => a.server.localeCompare(b.server) || a.name.localeCompare(b.name));
+  return [...channels.values()].sort((a, b) => a.key.localeCompare(b.key));
 }
 
 /** 读频道消息（纯 since 读）；reader 为任一已入册的本机身份 */
@@ -358,7 +369,7 @@ export async function runTui({ tail = 200, interval = 3 } = {}) {
     buf.push(`${sty.inverse}${renderSegs([[` anotify tui · read-only · ${st.identities.length} identit${st.identities.length === 1 ? 'y' : 'ies'}: ${names} · ${servers} · ${upd}`]], cols)}${sty.reset}`);
 
     // 左栏
-    const multiServer = new Set(st.channels.map((c) => c.server)).size > 1;
+    const multiServer = new Set(st.channels.map((c) => c.key.split('\t')[0])).size > 1;
     const lrows = channelRows(st.channels, multiServer);
     const left = [[[` CHANNELS (${st.channels.length})`, st.focus === 'left' ? `${sty.bold}${sty.cyan}` : sty.dim]]];
     const firstSel = lrows.findIndex((r) => r.idx === st.sel);
