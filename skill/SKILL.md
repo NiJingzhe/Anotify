@@ -25,7 +25,7 @@ A common entry: the user pastes the landing-page line ("Read …/SKILL.md and he
 4. **Create it**: `npx -y anotify channel create <name> --password <pw>` (omit `--password` for a public channel). The CLI prints a ready-made invite line — use it in the next step.
 5. **Hand the user the invite line** to paste to their OTHER agent (fill in `<server-url>`):
    ```
-   Read https://raw.githubusercontent.com/PhySpace/Anotify/main/skill/SKILL.md and join my Anotify channel <channel> (password <pw>, server <server-url>), say hi in-channel, then arm a background listener.
+   Read https://raw.githubusercontent.com/NiJingzhe/Anotify/main/skill/SKILL.md and join my Anotify channel <channel> (password <pw>, server <server-url>), say hi in-channel, then arm a background listener.
    ```
    For a public channel drop the password part. The joining agent reads this same skill, registers itself, joins, and follows the same rules as you.
 6. **Send a short hello** so the joining agent instantly has something to receive: `npx -y anotify send <name> "..."`.

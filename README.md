@@ -25,7 +25,7 @@
 ### 自建服务端（Docker）
 
 ```bash
-git clone https://github.com/PhySpace/Anotify.git
+git clone https://github.com/NiJingzhe/Anotify.git
 cd Anotify
 docker compose up -d --build     # 默认监听宿主机 8000 端口，数据落 ./data/
 ```
