@@ -1,10 +1,10 @@
-// SQLite 访问层：建表、v1→v2 迁移、seq 分配、游标语义、频道名册
+// SQLite 访问层：建表、v1→v2 迁移、seq 分配、游标语义、频道名册、文件元数据
 // 设计见 DESIGN.md §3（身份模型）/§4（可靠投递）/§5（游标初始化）/§8（存储）
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { HttpError, sha256 } from './schemas.js';
+import { HttpError, sha256, FILE_CONTENT_TYPE } from './schemas.js';
 import { timingSafeEqual } from 'node:crypto';
 
 /** 游标初始化窗口：新订阅者可见最近 10 分钟内的消息（DESIGN §5） */
@@ -43,6 +43,19 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at   REAL NOT NULL,
   PRIMARY KEY (channel, seq)
 );
+
+CREATE TABLE IF NOT EXISTS files (
+  id         TEXT PRIMARY KEY,
+  channel    TEXT NOT NULL,
+  seq        INTEGER NOT NULL,
+  uploader   TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  size       INTEGER NOT NULL,
+  sha256     TEXT NOT NULL,
+  mime       TEXT NOT NULL,
+  created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_files_channel ON files(channel);
 
 CREATE TABLE IF NOT EXISTS cursors (
   channel    TEXT NOT NULL,
@@ -283,12 +296,14 @@ export function createStore(dbPath) {
     const rows = db.prepare(`
       SELECT c.name, c.created_at, c.created_by, c.password_hash, ca.display_name AS created_by_name,
              (SELECT MAX(seq) FROM messages m WHERE m.channel = c.name) AS latest_seq,
-             cu.cursor AS my_cursor
+             cu.cursor AS my_cursor,
+             (cm.agent IS NOT NULL) AS joined
       FROM channels c
       LEFT JOIN agents ca ON ca.id = c.created_by
       LEFT JOIN cursors cu ON cu.channel = c.name AND cu.agent = ?
+      LEFT JOIN channel_members cm ON cm.channel = c.name AND cm.agent = ?
       ORDER BY c.created_at
-    `).all(agentId);
+    `).all(agentId, agentId);
     return rows.map((r) => {
       const latest = r.latest_seq ?? 0;
       return {
@@ -297,6 +312,7 @@ export function createStore(dbPath) {
         created_by: r.created_by,
         created_by_name: r.created_by_name ?? r.created_by,
         locked: !!r.password_hash,
+        joined: !!r.joined,
         latest_seq: latest,
         my_cursor: r.my_cursor ?? null,
         pending: r.my_cursor == null ? null : Math.max(0, latest - r.my_cursor),
@@ -328,6 +344,37 @@ export function createStore(dbPath) {
 
   function insertMessage(msg) {
     return insertTx(msg);
+  }
+
+  // ---- files（DESIGN §12：文件即消息，files 行与文件消息同一事务写入）----
+
+  /** 写 files 行 + 对应的文件消息；content 为元数据 JSON（字段顺序固定，便于客户端展示） */
+  const insertFileTx = db.transaction(({ fileId, channel, sender, name, size, sha256, mime, caption, reply_to }) => {
+    const content = JSON.stringify({ file_id: fileId, name, size, sha256, mime, caption: caption ?? null });
+    const msg = insertTx({ channel, sender, content, content_type: FILE_CONTENT_TYPE, reply_to });
+    db.prepare(`
+      INSERT INTO files (id, channel, seq, uploader, name, size, sha256, mime, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(fileId, channel, msg.seq, sender, name, size, sha256, mime, msg.created_at);
+    return { ...msg, content };
+  });
+
+  function insertFile(f) {
+    return insertFileTx(f);
+  }
+
+  function getFile(channel, fileId) {
+    return db.prepare(
+      'SELECT id, channel, seq, uploader, name, size, sha256, mime, created_at FROM files WHERE channel = ? AND id = ?'
+    ).get(channel, fileId);
+  }
+
+  function hasFileId(fileId) {
+    return !!db.prepare('SELECT 1 FROM files WHERE id = ?').get(fileId);
+  }
+
+  function filesTotalBytes() {
+    return db.prepare('SELECT COALESCE(SUM(size), 0) AS s FROM files').get().s;
   }
 
   function messagesSince(channel, since, limit) {
@@ -400,6 +447,10 @@ export function createStore(dbPath) {
     hasMessage,
     insertMessage,
     messagesSince,
+    insertFile,
+    getFile,
+    hasFileId,
+    filesTotalBytes,
     getCursorRow,
     ensureCursor,
     setCursor,

@@ -82,3 +82,31 @@ export function validateMessageBody(body) {
   }
   return { content: body.content, content_type, reply_to };
 }
+
+/** 文件消息的 content_type：content 为 JSON 元数据，只能由 POST /files 产生，防伪造（DESIGN §12） */
+export const FILE_CONTENT_TYPE = 'application/vnd.anotify.file+json';
+
+/** 文件名：单段 basename，1-255 字节，无路径分隔符 / 控制字符 */
+export function assertFileName(value) {
+  const ok =
+    typeof value === 'string' &&
+    value.length > 0 &&
+    Buffer.byteLength(value, 'utf8') <= 255 &&
+    value !== '.' && value !== '..' &&
+    !/[/\\\x00-\x1f\x7f]/.test(value);
+  if (!ok) {
+    throw new HttpError(422, 'invalid_param', 'name must be a plain file name (1-255 bytes, no path separators or control characters)');
+  }
+  return value;
+}
+
+/** 文件附言上限 4 KB */
+export const MAX_CAPTION_BYTES = 4 * 1024;
+
+export function assertCaption(value) {
+  if (value === undefined || value === '') return undefined;
+  if (Buffer.byteLength(value, 'utf8') > MAX_CAPTION_BYTES) {
+    throw new HttpError(422, 'invalid_param', `caption exceeds ${MAX_CAPTION_BYTES} bytes`);
+  }
+  return value;
+}

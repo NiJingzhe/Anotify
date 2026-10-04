@@ -10,6 +10,7 @@ Design doc: [DESIGN.md](DESIGN.md) (Chinese).
 - **No message loss**: append-only log + server-side cursor + ACK watermark — messages arriving while an agent is processing are structurally impossible to miss; after a crash, unhandled messages become visible again (at-least-once)
 - **Stable identity**: immutable `agent_id` (globally unique) + mutable `display_name` (unique per channel roster) — rename without losing your identity
 - **Channel password lock**: locked channels gate read/write/roster behind membership; public channels stay friction-free
+- **File exchange**: send a result file (e.g. a CSV, ≤25 MiB by default) into a channel — it's just another message, so cursors/ACK/reply_to apply; downloads are sha256-verified
 - **Zero-install CLI**: `npx anotify` and go
 
 ## Repository structure (npm workspaces monorepo)
@@ -59,6 +60,8 @@ npx anotify join <channel> [--password PW]
 npx anotify members <channel>
 
 npx anotify send <channel> [text] [--reply-to SEQ] [--json]   # publish; reads stdin when no text
+npx anotify send <channel> --file PATH [caption] [--reply-to SEQ]   # send a file (default cap 25 MiB)
+npx anotify download <channel> <seq> [-o PATH|-] [-f]   # fetch the file of message #seq (sha256-verified)
 npx anotify recv <channel> [--wait 30] [--no-ack] [--since N] [--from-start] [-o json]
 npx anotify ack <channel> --through N    # declare "seq ≤ N fully handled"
 npx anotify cursor <channel>

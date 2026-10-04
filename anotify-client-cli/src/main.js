@@ -6,7 +6,13 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { loadCredentials, requireCredentials, saveCredentials } from './config.js';
-import { api, ApiError } from './api.js';
+import { createWriteStream, existsSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
+import { basename } from 'node:path';
+import { createHash } from 'node:crypto';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { api, apiRaw, ApiError } from './api.js';
+import { contentLines, fileMeta, humanSize } from './render.js';
 
 const program = new Command();
 
@@ -19,7 +25,7 @@ process.stdout?.on('error', (e) => {
 program
   .name('anotify')
   .description('Anotify: channel-based messaging for agents')
-  .version('0.3.2');
+  .version('0.4.0');
 
 // 管道下游提前退出（如 `anotify recv ... | head`）时安静收场，不打堆栈
 process.stdout?.on('error', (e) => {
@@ -27,11 +33,11 @@ process.stdout?.on('error', (e) => {
   throw e;
 });
 
-function printMessage(m) {
+function printMessage(m, channel) {
   const time = new Date(m.created_at * 1000).toTimeString().slice(0, 8);
   const reply = m.reply_to != null ? `  ↳#${m.reply_to}` : '';
   console.log(`#${m.seq}  ${m.sender_name ?? m.sender}  ${time}${reply}`);
-  for (const line of String(m.content).split('\n')) {
+  for (const line of contentLines(m, channel)) {
     console.log(`  ${line}`);
   }
 }
@@ -228,11 +234,18 @@ program
 
 program
   .command('send <channel> [text]')
-  .description('Publish a message; reads stdin when no text argument is given')
+  .description('Publish a message; reads stdin when no text argument is given. With --file, uploads a file (text becomes its caption)')
   .option('--reply-to <seq>', 'Quote another message by its seq in the same channel', Number)
   .option('--json', 'Publish as application/json; content read from stdin')
+  .option('--file <path>', 'Send a file (e.g. a result CSV) as a file message; the server caps file size (default 25 MiB)')
   .action((chName, text, opts) => run(async () => {
     const cred = requireCredentials();
+    if (opts.file) {
+      if (opts.json) throw new Error('--file and --json cannot be used together');
+      await sendFile(cred, chName, opts.file, text, opts.replyTo);
+      hint(`Arm a background listener for replies (run it in a background shell): anotify recv ${chName} --wait 60`);
+      return;
+    }
     let content = text;
     let content_type = 'text/plain';
     if (opts.json) {
@@ -279,7 +292,7 @@ program
     } else if (resp.messages.length === 0) {
       console.log('(No new messages)');
     } else {
-      for (const m of resp.messages) printMessage(m);
+      for (const m of resp.messages) printMessage(m, chName);
     }
 
     if (explicit !== undefined) {
@@ -298,6 +311,72 @@ program
       console.log(`ACKed through ${through} (--no-ack disables auto-consume)`);
       hint(`After handling, re-arm your background listener: anotify recv ${chName} --wait 60`);
     }
+  }));
+
+async function sendFile(cred, chName, filePath, caption, replyTo) {
+  if (!existsSync(filePath) || !statSync(filePath).isFile()) {
+    throw new Error(`Not a file: ${filePath}`);
+  }
+  const data = readFileSync(filePath);
+  const res = await apiRaw(cred, 'POST', `/v1/channels/${encodeURIComponent(chName)}/files`, {
+    query: { name: basename(filePath), caption: caption || undefined, reply_to: replyTo },
+    body: data,
+    contentType: 'application/octet-stream',
+    timeoutMs: 600_000,
+  });
+  const resp = await res.json();
+  console.log(`✓ Published file to ${resp.channel}: seq=${resp.seq} sender=${resp.sender_name ?? resp.sender}`);
+  console.log(`  📎 ${resp.file.name} (${humanSize(resp.file.size)}, ${resp.file.mime}) sha256=${resp.file.sha256.slice(0, 12)}…`);
+}
+
+program
+  .command('download <channel> <seq>')
+  .description('Download the file attached to file message #seq (sha256-verified; pure read, cursor untouched)')
+  .option('-o, --output <path>', 'Output path ("-" for stdout); defaults to the original file name in the current directory')
+  .option('-f, --force', 'Overwrite an existing output file')
+  .action((chName, seqArg, opts) => run(async () => {
+    const cred = requireCredentials();
+    const seq = Number(seqArg);
+    if (!Number.isInteger(seq) || seq < 1) throw new Error('seq must be a positive integer');
+    const ch = encodeURIComponent(chName);
+    const page = await api(cred, 'GET', `/v1/channels/${ch}/messages`, { query: { since: seq - 1, limit: 1 } });
+    const m = page.messages[0];
+    if (!m || m.seq !== seq) throw new Error(`Message #${seq} not found in ${chName}`);
+    const meta = fileMeta(m);
+    if (!meta) throw new Error(`Message #${seq} in ${chName} is not a file message`);
+
+    const toStdout = opts.output === '-';
+    const out = opts.output && !toStdout ? opts.output : basename(meta.name);
+    if (!toStdout && existsSync(out) && !opts.force) {
+      throw new Error(`${out} already exists (use -f to overwrite or -o <path>)`);
+    }
+
+    const res = await apiRaw(cred, 'GET', `/v1/channels/${ch}/files/${encodeURIComponent(meta.file_id)}`, {
+      timeoutMs: 600_000,
+    });
+    const hash = createHash('sha256');
+    const tap = new Transform({
+      transform(chunk, _enc, cb) {
+        hash.update(chunk);
+        cb(null, chunk);
+      },
+    });
+    const part = `${out}.part`;
+    const sink = toStdout ? process.stdout : createWriteStream(part);
+    try {
+      await pipeline(Readable.fromWeb(res.body), tap, sink, { end: !toStdout });
+    } catch (e) {
+      if (!toStdout) rmSync(part, { force: true });
+      throw e;
+    }
+    const digest = hash.digest('hex');
+    if (digest !== meta.sha256) {
+      if (!toStdout) rmSync(part, { force: true });
+      throw new Error(`sha256 mismatch (expected ${meta.sha256}, got ${digest}); download discarded`);
+    }
+    if (toStdout) return;
+    renameSync(part, out);
+    console.log(`✓ Saved ${out} (${humanSize(meta.size)}, sha256 verified)`);
   }));
 
 program

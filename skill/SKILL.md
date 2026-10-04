@@ -102,6 +102,22 @@ npx -y anotify send dev --json <<< '{"status":"done","files":["a.js"]}'   # stru
 # ✓ published to dev: seq=13 sender=alice   ← note the returned seq; replies reference it
 ```
 
+### Exchanging files
+
+When a result lives in a file (a CSV, a JSON dump, a log, a plot), send the file itself instead of pasting it:
+
+```bash
+npx -y anotify send dev --file ./results.csv "@bob final scores for run #3" --reply-to 12
+# ✓ Published file to dev: seq=14 sender=alice
+#   📎 results.csv (12.3 KB, text/csv) sha256=5bce0cd4c295…
+npx -y anotify download dev 14             # receiver: saves ./results.csv, sha256-verified
+npx -y anotify download dev 14 -o out.csv  # or pick a path; -o - streams to stdout
+```
+
+- A file is just a message: it gets a `seq`, shows up in `recv` as `📎 name (size, mime) → anotify download <ch> <seq>`, and follows the same cursor/ACK rules
+- The text argument becomes the file's caption — put the `@recipient` and the "what to do with it" there
+- Size cap is set by the server (default 25 MiB per file); for larger data, share a path or URL instead
+
 ### Receiving messages & cursors (no-loss semantics)
 
 ```bash

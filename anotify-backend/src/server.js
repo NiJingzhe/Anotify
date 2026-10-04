@@ -4,7 +4,13 @@ import { Hono } from 'hono';
 import { logger } from 'hono/logger';
 import { createStore } from './db.js';
 import { requireAuth } from './auth.js';
-import { HttpError, parseJson, parseOptionalJson, assertName, assertInt, validateMessageBody } from './schemas.js';
+import { Readable } from 'node:stream';
+import { dirname, join } from 'node:path';
+import { createBlobStore, newFileId, guessMime } from './files.js';
+import {
+  HttpError, parseJson, parseOptionalJson, assertName, assertInt, validateMessageBody,
+  assertFileName, assertCaption, FILE_CONTENT_TYPE,
+} from './schemas.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -12,7 +18,15 @@ const dbPath = process.env.ANOTIFY_DB ?? './anotify.db';
 const port = Number(process.env.PORT ?? 8000);
 const host = process.env.HOST ?? '0.0.0.0';
 
+// 文件交换（DESIGN §12）：blob 默认与数据库同目录，容器内即 /data/files
+const filesDir = process.env.ANOTIFY_FILES_DIR ?? join(dirname(dbPath), 'files');
+const maxFileBytes = Number(process.env.ANOTIFY_MAX_FILE_BYTES ?? 25 * 1024 * 1024);
+const filesQuotaBytes = Number(process.env.ANOTIFY_FILES_QUOTA_BYTES ?? 2 * 1024 * 1024 * 1024);
+
 const store = createStore(dbPath);
+const blobs = createBlobStore(filesDir);
+const swept = blobs.sweep((id) => store.hasFileId(id));
+if (swept) console.log(`files: swept ${swept} orphan blob(s)`);
 const app = new Hono();
 
 app.use(logger());
@@ -195,6 +209,90 @@ authed.get('/channels/:ch/messages', async (c) => {
   });
 });
 
+// POST /v1/channels/:ch/files —— 上传文件（§12）：body 为原始字节流，落盘后作为一条文件消息进入频道日志
+authed.post('/channels/:ch/files', async (c) => {
+  const ch = requireChannel(c);
+  requireAccess(c, ch);
+  const agentId = c.get('agentId');
+  const q = c.req.query();
+  const name = assertFileName(q.name);
+  const caption = assertCaption(q.caption);
+  let reply_to;
+  if (q.reply_to !== undefined && q.reply_to !== '') {
+    reply_to = assertInt(q.reply_to, { min: 1, label: 'reply_to' });
+    if (!store.hasMessage(ch, reply_to)) {
+      throw new HttpError(422, 'reply_target_missing', `reply_to seq ${reply_to} not found in channel "${ch}"`);
+    }
+  }
+
+  // 声明了 Content-Length 的先行拦截，免得白传一遍
+  const declared = Number(c.req.header('content-length') ?? NaN);
+  if (declared > maxFileBytes) {
+    throw new HttpError(413, 'file_too_large', `file exceeds ${maxFileBytes} bytes`);
+  }
+  const assertQuota = (size) => {
+    if (store.filesTotalBytes() + size > filesQuotaBytes) {
+      throw new HttpError(507, 'storage_quota_exceeded', 'server file storage quota exceeded');
+    }
+  };
+  if (declared > 0) assertQuota(declared);
+
+  store.ensureMember(ch, agentId); // 重名校验先于落盘（§3）
+  const blob = await blobs.receive(c.req.raw.body, maxFileBytes);
+  try {
+    if (blob.size === 0) throw new HttpError(422, 'empty_file', 'file is empty');
+    assertQuota(blob.size);
+  } catch (e) {
+    blobs.discard(blob.tmpPath);
+    throw e;
+  }
+  const fileId = newFileId();
+  blobs.commit(blob.tmpPath, fileId);
+
+  let msg;
+  try {
+    msg = store.insertFile({
+      fileId, channel: ch, sender: agentId, name, size: blob.size, sha256: blob.sha256,
+      mime: guessMime(name, c.req.header('content-type')), caption, reply_to,
+    });
+  } catch (e) {
+    blobs.remove(fileId); // 事务失败即删，崩溃残留由启动 sweep 兜底
+    throw e;
+  }
+  return c.json({
+    channel: ch,
+    seq: msg.seq,
+    sender: agentId,
+    sender_name: c.get('agentName'),
+    content: msg.content,
+    content_type: FILE_CONTENT_TYPE,
+    reply_to: reply_to ?? null,
+    created_at: msg.created_at,
+    file: JSON.parse(msg.content),
+  }, 201);
+});
+
+// GET /v1/channels/:ch/files/:id —— 下载文件（§12）：与读消息同一道访问门
+authed.get('/channels/:ch/files/:id', (c) => {
+  const ch = requireChannel(c);
+  requireAccess(c, ch);
+  const id = c.req.param('id');
+  const row = store.getFile(ch, id);
+  if (!row) throw new HttpError(404, 'file_not_found', `file "${id}" not found in channel "${ch}"`);
+  const stream = blobs.open(id);
+  if (!stream) throw new HttpError(410, 'file_gone', `file "${id}" is missing from server storage`);
+  const encoded = encodeURIComponent(row.name);
+  return new Response(Readable.toWeb(stream), {
+    headers: {
+      'content-type': row.mime,
+      'content-length': String(row.size),
+      'content-disposition': `attachment; filename*=UTF-8''${encoded}`,
+      'x-anotify-file-name': encoded,
+      'x-anotify-sha256': row.sha256,
+    },
+  });
+});
+
 // POST /v1/channels/:ch/ack —— 推进游标水位线（§6.5）
 authed.post('/channels/:ch/ack', async (c) => {
   const ch = requireChannel(c);
@@ -226,6 +324,7 @@ app.route('/v1', v1);
 const server = serve({ fetch: app.fetch, port, host }, (info) => {
   console.log(`anotify-backend listening on http://${info.address}:${info.port}`);
   console.log(`  db: ${dbPath}`);
+  console.log(`  files: ${filesDir} (max ${maxFileBytes} B/file, quota ${filesQuotaBytes} B)`);
 });
 
 for (const sig of ['SIGINT', 'SIGTERM']) {

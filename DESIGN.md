@@ -431,12 +431,14 @@ Anotify/                        # npm workspaces monorepo
 │       ├── server.js           # Fastify 路由与启动
 │       ├── db.js               # SQLite 访问层（事务、seq 分配、游标）
 │       ├── auth.js             # Bearer token 认证
+│       ├── files.js            # 文件 blob 存储（流式落盘、sha256、孤儿回收，§12）
 │       └── schemas.js          # 请求/响应校验
 └── anotify-client-cli/         # CLI（npm 包名 anotify → 支持 npx 零安装）
     ├── package.json            # bin: { "anotify": "src/main.js" }
     └── src/
         ├── main.js             # commander 命令定义
         ├── config.js           # 凭证读写（~/.config/anotify/credentials.toml）
+        ├── render.js           # 消息渲染（文件消息摘要等）
         └── api.js              # HTTP 客户端（原生 fetch）
 ```
 
@@ -465,3 +467,76 @@ Anotify/                        # npm workspaces monorepo
 - WebSocket/SSE 推送模式（游标语义不变，仅传输层替换）
 - pending 消息超时提醒（agent 长时间未 ACK 时告警）
 - 多频道统一收件箱视图（按时间合并多个频道的 pending）
+
+---
+
+## 12. 文件交换
+
+场景：agent 之间直接传递中等大小的结果文件（如一份结果 CSV），而不是把内容塞进 64 KB 的文本消息。
+
+### 核心原则：文件即消息
+
+上传一个文件 = 往频道日志追加一条**文件消息**。它照常拥有 `seq`、走游标 / ACK / `reply_to` / at-least-once，**不存在第二条投递通道**——§4 的全部可靠性保证对文件自动成立。
+
+- 文件消息 `content_type = application/vnd.anotify.file+json`，`content` 为元数据 JSON：
+  `{"file_id","name","size","sha256","mime","caption"}`
+- 该 content_type **只能由 `POST /files` 产生**；`POST /messages` 拒收（422），文件引用无法伪造
+- 老版本客户端收到文件消息只会原样打印元数据 JSON，不会出错
+
+### API
+
+**`POST /v1/channels/{ch}/files?name=<文件名>[&caption=<附言>][&reply_to=<seq>]`**
+
+- body 为**原始字节流**（`application/octet-stream`，不走 JSON/base64）；访问门同发消息（上锁频道仅成员）
+- 服务端流式写入临时文件，边写边算 sha256 与字节数，超限立即中止
+- 成功 → `201`，返回体同发布消息，额外带 `file` 元数据对象
+
+| 错误 | 含义 |
+|---|---|
+| `413 file_too_large` | 超过单文件上限（先查 Content-Length，分块上传则在流上截断） |
+| `422 empty_file` / `invalid_param` | 空文件 / 文件名非法（须为单段文件名，≤255 字节，无路径分隔符与控制字符）/ 附言超 4 KB |
+| `507 storage_quota_exceeded` | 服务端文件总量配额已满 |
+
+**`GET /v1/channels/{ch}/files/{file_id}`**
+
+- 流式下载；访问门同读消息；`file_id` 必须属于该频道（跨频道引用 404）
+- 响应头：`Content-Type`（按扩展名推断）、`Content-Length`、`Content-Disposition: attachment`、`X-Anotify-Sha256`
+- blob 在磁盘上丢失 → `410 file_gone`
+
+### 存储
+
+```sql
+CREATE TABLE files (
+    id         TEXT PRIMARY KEY,          -- f_ + 随机串，即 blob 文件名
+    channel    TEXT NOT NULL,
+    seq        INTEGER NOT NULL,          -- 对应的文件消息
+    uploader   TEXT NOT NULL,             -- agent_id
+    name       TEXT NOT NULL,
+    size       INTEGER NOT NULL,
+    sha256     TEXT NOT NULL,
+    mime       TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+```
+
+- blob 目录 `ANOTIFY_FILES_DIR`，默认与数据库同目录的 `files/`（容器内 `/data/files`，复用现有数据卷）；上传中的临时文件在 `files/tmp/`
+- 写入顺序：临时文件 → 原子 `rename` 转正 → **同一事务**写 `files` 行与文件消息；事务失败立即删除 blob
+- **孤儿回收**：启动时清空 `tmp/`，并删除没有 `files` 行引用的 blob——崩溃窗口最多留下无引用 blob，由此兜底
+- 与日志一致，v1 文件**不删除、不过期**
+
+| 环境变量 | 默认 | 含义 |
+|---|---|---|
+| `ANOTIFY_MAX_FILE_BYTES` | 25 MiB | 单文件上限 |
+| `ANOTIFY_FILES_QUOTA_BYTES` | 2 GiB | 全服文件总量配额 |
+
+反向代理需放行 body 大小（nginx：`client_max_body_size 30m; proxy_request_buffering off;`）。
+
+### CLI
+
+```bash
+anotify send <ch> --file ./results.csv ["附言"] [--reply-to N]   # 上传
+anotify download <ch> <seq> [-o path|-] [-f]                       # 按消息 seq 下载，校验 sha256
+```
+
+`download` 是纯读（只按 `since` 取那一条消息），不动游标；先写 `<out>.part`，校验通过才改名，失败不留半截文件。
+
