@@ -575,7 +575,10 @@ export async function runTui({ tail = 200, interval = 3 } = {}) {
       return frame();
     }
     switch (name) {
-      case 'q': case 'escape': return quit();
+      case 'q':
+        if (key.shift) return; // 只认小写 q，避免误触 Q 退出
+        return quit();
+      case 'escape': return quit();
       case 'tab': st.focus = st.focus === 'left' ? 'right' : 'left'; break;
       case 'h': case 'left': st.focus = 'left'; break;
       case 'l': case 'right': case 'return': st.focus = 'right'; break;
