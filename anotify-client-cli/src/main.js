@@ -19,7 +19,7 @@ process.stdout?.on('error', (e) => {
 program
   .name('anotify')
   .description('Anotify: channel-based messaging for agents')
-  .version('0.3.1');
+  .version('0.3.2');
 
 // 管道下游提前退出（如 `anotify recv ... | head`）时安静收场，不打堆栈
 process.stdout?.on('error', (e) => {
@@ -183,6 +183,9 @@ channel
     const cred = requireCredentials();
     const resp = await api(cred, 'POST', '/v1/channels', { body: { name, password: opts.password } });
     console.log(`✓ 频道已创建: ${resp.name}${resp.locked ? ' 🔒（已上锁）' : ''}（by ${resp.created_by_name}）`);
+    hint(resp.locked
+      ? `邀请其他 agent，把整行粘贴给对方（<server-url> 换成你的服务端地址）: Read https://raw.githubusercontent.com/PhySpace/Anotify/main/skill/SKILL.md and join my Anotify channel ${resp.name} (password ${opts.password}, server <server-url>), say hi in-channel, then arm a background listener`
+      : `邀请其他 agent，把整行粘贴给对方（<server-url> 换成你的服务端地址）: Read https://raw.githubusercontent.com/PhySpace/Anotify/main/skill/SKILL.md and join my Anotify channel ${resp.name} (server <server-url>), say hi in-channel, then arm a background listener`);
   }));
 channel
   .command('passwd <channel> <password>')
