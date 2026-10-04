@@ -1,7 +1,7 @@
 :root {
   --serif: 'Playfair Display', Georgia, 'Times New Roman', serif;
-  --ink: #fff8f3;
-  --ink-soft: rgba(255, 248, 243, 0.92);
+  --ink: #1a1f3d;
+  --ink-soft: rgba(26, 31, 61, 0.72);
 }
 
 * {
@@ -56,7 +56,7 @@ body {
   text-transform: uppercase;
   font-size: clamp(0.65rem, 1.4vw, 0.85rem);
   color: var(--ink-soft);
-  text-shadow: 0 1px 2px rgba(30, 8, 40, 0.6), 0 2px 16px rgba(30, 8, 40, 0.55);
+  text-shadow: 0 1px 10px rgba(255, 255, 255, 0.35);
 }
 
 .title {
@@ -65,7 +65,7 @@ body {
   font-size: clamp(4rem, 13vw, 9.5rem);
   line-height: 1.02;
   letter-spacing: 0.01em;
-  text-shadow: 0 2px 3px rgba(30, 8, 40, 0.5), 0 4px 34px rgba(30, 8, 40, 0.55);
+  text-shadow: 0 2px 24px rgba(255, 255, 255, 0.45);
 }
 
 .tagline {
@@ -73,7 +73,7 @@ body {
   font-size: clamp(1.05rem, 2.4vw, 1.5rem);
   font-weight: 600;
   color: var(--ink-soft);
-  text-shadow: 0 1px 2px rgba(30, 8, 40, 0.55), 0 2px 18px rgba(30, 8, 40, 0.5);
+  text-shadow: 0 1px 10px rgba(255, 255, 255, 0.35);
 }
 
 .tagline em {
@@ -97,7 +97,7 @@ body {
   font-size: 0.95rem;
   letter-spacing: 0.06em;
   color: var(--ink-soft);
-  text-shadow: 0 1px 2px rgba(30, 8, 40, 0.55);
+  text-shadow: 0 1px 8px rgba(255, 255, 255, 0.3);
 }
 
 .copy-box {
@@ -110,17 +110,17 @@ body {
   cursor: pointer;
   text-align: left;
   color: var(--ink);
-  background: rgba(24, 10, 30, 0.5);
-  border: 1px solid rgba(255, 248, 243, 0.38);
+  background: rgba(255, 255, 255, 0.42);
+  border: 1px solid rgba(26, 31, 61, 0.22);
   border-radius: 14px;
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  box-shadow: 0 10px 40px rgba(30, 8, 40, 0.25);
+  box-shadow: 0 10px 40px rgba(26, 31, 61, 0.12);
   transition: border-color 0.2s ease, transform 0.15s ease;
 }
 
 .copy-box:hover {
-  border-color: rgba(255, 248, 243, 0.55);
+  border-color: rgba(26, 31, 61, 0.45);
   transform: translateY(-1px);
 }
 
@@ -135,7 +135,6 @@ body {
   line-height: 1.5;
   overflow-wrap: anywhere;
   white-space: normal;
-  text-shadow: 0 1px 2px rgba(30, 8, 40, 0.5);
 }
 
 .copy-box .url {
@@ -148,16 +147,16 @@ body {
   font-size: 0.9rem;
   letter-spacing: 0.08em;
   opacity: 0.95;
-  border: 1px solid rgba(255, 248, 243, 0.4);
+  border: 1px solid rgba(26, 31, 61, 0.35);
   border-radius: 999px;
   padding: 0.18rem 0.75rem;
-  background: rgba(24, 10, 30, 0.35);
+  background: rgba(255, 255, 255, 0.5);
   transition: opacity 0.2s ease, background 0.2s ease;
 }
 
 .copy-hint.is-copied {
   opacity: 1;
-  background: rgba(255, 248, 243, 0.18);
+  background: rgba(26, 31, 61, 0.12);
 }
 
 /* ---------- footer ---------- */
@@ -174,17 +173,17 @@ body {
   font-size: 0.9rem;
   font-style: italic;
   color: var(--ink-soft);
-  text-shadow: 0 1px 2px rgba(30, 8, 40, 0.55), 0 2px 12px rgba(30, 8, 40, 0.5);
+  text-shadow: 0 1px 8px rgba(255, 255, 255, 0.3);
 }
 
 .footer a {
   color: inherit;
   text-decoration: none;
-  border-bottom: 1px solid rgba(255, 248, 243, 0.35);
+  border-bottom: 1px solid rgba(26, 31, 61, 0.35);
 }
 
 .footer a:hover {
-  border-bottom-color: rgba(255, 248, 243, 0.8);
+  border-bottom-color: rgba(26, 31, 61, 0.7);
 }
 
 .footer code {
