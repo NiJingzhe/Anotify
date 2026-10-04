@@ -5,6 +5,9 @@ import GradientCanvas from './GradientCanvas.jsx';
 const AGENT_LINE =
   'Read https://raw.githubusercontent.com/PhySpace/Anotify/main/skill/SKILL.md and help me start with Anotify.';
 
+// 展示用缩短 URL（剪贴板始终写入完整 AGENT_LINE；nowrap 防碎行）
+const DISPLAY_URL = 'raw.githubusercontent.com/…/SKILL.md';
+
 async function copyText(text) {
   try {
     await navigator.clipboard.writeText(text);
@@ -34,7 +37,11 @@ function CopyLine() {
     <div className="copy-card">
       <p className="copy-label">Paste this into your agent</p>
       <button type="button" className="copy-box" onClick={onCopy} title="Click to copy">
-        <code>{AGENT_LINE}</code>
+        <code>
+          {'Read '}
+          <span className="url" title={AGENT_LINE}>{DISPLAY_URL}</span>
+          {' and help me start with Anotify.'}
+        </code>
         <span className={`copy-hint${copied ? ' is-copied' : ''}`}>{copied ? '✓ copied' : 'copy'}</span>
       </button>
     </div>
