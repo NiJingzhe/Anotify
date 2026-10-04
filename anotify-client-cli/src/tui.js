@@ -2,6 +2,7 @@
 // 零依赖：原生 ANSI + readline keypress。只用 since 读，绝不 ACK、绝不初始化任何身份的游标。
 import readline from 'node:readline';
 import { writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { listProfiles } from './config.js';
 import { api } from './api.js';
 import { contentLines, fileMeta, humanSize } from './render.js';
@@ -405,7 +406,7 @@ export async function runTui({ tail = 200, interval = 3 } = {}) {
     const keys = '↑↓/jk move · Tab focus · PgUp/PgDn scroll · g/G top/bottom · m members · f dump · r refresh · ? help · q quit';
     buf.push(`${sty.inverse}${renderSegs([[` ${st.status ? `${st.status} · ` : ''}${keys}`]], cols)}${sty.reset}`);
 
-    out.write(`${ESC}H${buf.join(`${ESC}K\n`)}${ESC}K${st.overlay ? overlay(cols, rows) : ''}`);
+    out.write(`${ESC}H${buf.join(`${ESC}K\n`)}${ESC}K${st.overlay && cols >= 20 && rows >= 8 ? overlay(cols, rows) : ''}`);
   }
 
   /** 居中浮层（帮助 / 成员列表），按坐标绘制在底图之上 */
@@ -517,10 +518,13 @@ export async function runTui({ tail = 200, interval = 3 } = {}) {
     const stamp = `${ymd(d).replace(/-/g, '')}-${hms(d).replace(/:/g, '')}`;
     const file = `anotify-${ch.name}-${stamp}.json`;
     writeFileSync(file, JSON.stringify({ generated_at: d.getTime() / 1000, ...channelView(ch, cache.get(ch.key)) }, null, 2));
-    st.status = `✓ dumped ${file}`;
+    st.status = `✓ dumped ${resolve(file)}`;
   }
 
+  let restored = false;
   function cleanup() {
+    if (restored) return;
+    restored = true;
     out.write(`${ESC}?25h${ESC}?1049l`);
     if (process.stdin.isTTY) process.stdin.setRawMode(false);
     process.stdin.pause();
@@ -539,9 +543,29 @@ export async function runTui({ tail = 200, interval = 3 } = {}) {
     cleanup();
     resolveDone();
   };
-  process.on('exit', () => out.write(`${ESC}?25h${ESC}?1049l`));
+  process.on('exit', cleanup);
 
-  process.stdin.on('keypress', (str, key = {}) => {
+  // 崩溃兜底：先恢复终端再打印堆栈——否则错误输出在备用屏里，退出后什么都看不到
+  const fail = (e) => {
+    if (st.quitting) return;
+    st.quitting = true;
+    cleanup();
+    console.error(`✗ anotify tui crashed: ${e?.stack ?? e}`);
+    process.exitCode = 1;
+    resolveDone();
+  };
+  process.on('uncaughtException', fail);
+  process.on('unhandledRejection', fail);
+
+  process.stdin.on('keypress', (str, key) => {
+    try {
+      onKey(str, key ?? {});
+    } catch (e) {
+      fail(e);
+    }
+  });
+
+  function onKey(str, key) {
     if (st.quitting) return;
     const name = key.name ?? str;
     const page = Math.max(1, (out.rows || 24) - 4);
@@ -579,7 +603,7 @@ export async function runTui({ tail = 200, interval = 3 } = {}) {
       default: return;
     }
     frame();
-  });
+  }
 
   await refresh({ identities: true });
   frame();
