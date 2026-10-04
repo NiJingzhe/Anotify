@@ -1,21 +1,34 @@
-// SQLite 访问层：建表、seq 分配、游标语义（设计见 DESIGN.md §4/§5/§8）
+// SQLite 访问层：建表、v1→v2 迁移、seq 分配、游标语义、频道名册
+// 设计见 DESIGN.md §3（身份模型）/§4（可靠投递）/§5（游标初始化）/§8（存储）
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { HttpError, sha256 } from './schemas.js';
 
+/** 游标初始化窗口：新订阅者可见最近 10 分钟内的消息（DESIGN §5） */
+const CURSOR_INIT_WINDOW_SECONDS = 600;
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS agents (
-  name       TEXT PRIMARY KEY,
-  token_hash TEXT NOT NULL,
-  created_at REAL NOT NULL
+  id           TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL,
+  token_hash   TEXT NOT NULL,
+  created_at   REAL NOT NULL
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_token_hash ON agents(token_hash);
 
 CREATE TABLE IF NOT EXISTS channels (
   name       TEXT PRIMARY KEY,
   created_by TEXT NOT NULL,
   created_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS channel_members (
+  channel   TEXT NOT NULL,
+  agent     TEXT NOT NULL,
+  joined_at REAL NOT NULL,
+  PRIMARY KEY (channel, agent)
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -38,35 +51,163 @@ CREATE TABLE IF NOT EXISTS cursors (
 );
 `;
 
-/** 游标初始化窗口：新订阅者可见最近 10 分钟内的消息（DESIGN §5） */
-const CURSOR_INIT_WINDOW_SECONDS = 600;
+const newAgentId = () => 'ag_' + randomBytes(12).toString('base64url');
+
+/**
+ * v1 → v2 身份模型迁移（DESIGN §3）：
+ * agents(name 主键) → agents(id 主键 + display_name)，
+ * messages.sender / cursors.agent / channels.created_by 中的旧名字全部映射为新生成的 id。
+ * token_hash 原样保留——存量 agent 的凭证继续有效。
+ */
+function migrateIdentityModel(db) {
+  const hasAgents = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='agents'"
+  ).get();
+  if (!hasAgents) return false;
+  const cols = db.pragma('table_info(agents)');
+  if (cols.some((c) => c.name === 'id')) return false; // 已是 v2
+
+  const migrate = db.transaction(() => {
+    db.exec('ALTER TABLE agents RENAME TO agents_old');
+    db.exec(`
+      CREATE TABLE agents (
+        id           TEXT PRIMARY KEY,
+        display_name TEXT NOT NULL,
+        token_hash   TEXT NOT NULL,
+        created_at   REAL NOT NULL
+      );
+      CREATE UNIQUE INDEX idx_agents_token_hash ON agents(token_hash);
+    `);
+    const rows = db.prepare('SELECT name, token_hash, created_at FROM agents_old').all();
+    const ins = db.prepare(
+      'INSERT INTO agents (id, display_name, token_hash, created_at) VALUES (?, ?, ?, ?)'
+    );
+    const map = {};
+    for (const r of rows) {
+      const id = newAgentId();
+      map[r.name] = id;
+      ins.run(id, r.name, r.token_hash, r.created_at);
+    }
+    const updMsg = db.prepare('UPDATE messages SET sender = ? WHERE sender = ?');
+    const updCur = db.prepare('UPDATE cursors SET agent = ? WHERE agent = ?');
+    const updCh = db.prepare('UPDATE channels SET created_by = ? WHERE created_by = ?');
+    for (const [name, id] of Object.entries(map)) {
+      updMsg.run(id, name);
+      updCur.run(id, name);
+      updCh.run(id, name);
+    }
+    db.exec('DROP TABLE agents_old');
+  });
+  migrate();
+  return true;
+}
+
+/** 迁移后回填频道名册：发过消息或有游标的 agent 都是频道成员 */
+function backfillRoster(db) {
+  db.exec(`
+    INSERT OR IGNORE INTO channel_members (channel, agent, joined_at)
+    SELECT DISTINCT m.channel, m.sender, m.created_at FROM messages m;
+
+    INSERT OR IGNORE INTO channel_members (channel, agent, joined_at)
+    SELECT c.channel, c.agent, c.updated_at FROM cursors c;
+  `);
+}
 
 export function createStore(dbPath) {
   mkdirSync(dirname(dbPath), { recursive: true });
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
   db.pragma('busy_timeout = 5000');
+
+  const migrated = migrateIdentityModel(db);
   db.exec(SCHEMA);
+  if (migrated) backfillRoster(db);
 
   const now = () => Date.now() / 1000;
 
   // ---- agents ----
 
-  const hasAgent = db.prepare('SELECT 1 FROM agents WHERE name = ?');
-
-  function createAgent(name) {
-    if (hasAgent.get(name)) {
-      throw new HttpError(409, 'name_taken', `agent "${name}" already exists`);
-    }
+  function createAgent(displayName) {
+    // 注册不查重：display_name 的唯一性在频道名册范围内校验（DESIGN §3）
     const token = randomBytes(32).toString('base64url');
-    db.prepare('INSERT INTO agents (name, token_hash, created_at) VALUES (?, ?, ?)')
-      .run(name, sha256(token), now());
-    return { agent_id: name, token };
+    let id;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      id = newAgentId();
+      try {
+        db.prepare('INSERT INTO agents (id, display_name, token_hash, created_at) VALUES (?, ?, ?, ?)')
+          .run(id, displayName, sha256(token), now());
+        return { agent_id: id, display_name: displayName, token };
+      } catch (e) {
+        if (!String(e.message).includes('UNIQUE')) throw e;
+        // id 极小概率撞主键，换一个重试；token 哈希撞索引同理
+      }
+    }
+    throw new HttpError(500, 'internal', 'failed to allocate agent id');
   }
 
   function verifyAgent(token) {
-    const row = db.prepare('SELECT name FROM agents WHERE token_hash = ?').get(sha256(token));
-    return row?.name ?? null;
+    return db.prepare('SELECT id, display_name FROM agents WHERE token_hash = ?')
+      .get(sha256(token)) ?? null;
+  }
+
+  function getAgentRow(agentId) {
+    return db.prepare('SELECT id, display_name FROM agents WHERE id = ?').get(agentId);
+  }
+
+  /**
+   * 改名（PATCH /v1/agents/me）：只改显示视图。
+   * 冲突校验范围 = 自己已加入的频道名册（DESIGN §3）。
+   */
+  function renameAgent(agentId, newDisplayName) {
+    const conflicts = db.prepare(`
+      SELECT DISTINCT cm.channel
+      FROM channel_members cm
+      JOIN agents a ON a.id = cm.agent
+      WHERE cm.agent != ?
+        AND a.display_name = ?
+        AND cm.channel IN (SELECT channel FROM channel_members WHERE agent = ?)
+    `).all(agentId, newDisplayName, agentId);
+    if (conflicts.length) {
+      throw new HttpError(
+        409, 'name_conflict',
+        `display_name "${newDisplayName}" 已被频道 [${conflicts.map((c) => c.channel).join(', ')}] 的成员使用，换一个名字或先离开相关频道`
+      );
+    }
+    db.prepare('UPDATE agents SET display_name = ? WHERE id = ?').run(newDisplayName, agentId);
+    return { agent_id: agentId, display_name: newDisplayName };
+  }
+
+  // ---- 频道名册 ----
+
+  /** 同频道成员间 display_name 不得重复；通过则入册（幂等），返回是否新加入 */
+  function ensureMember(channel, agentId) {
+    const myName = getAgentRow(agentId)?.display_name;
+    const dup = db.prepare(`
+      SELECT a.display_name
+      FROM channel_members cm
+      JOIN agents a ON a.id = cm.agent
+      WHERE cm.channel = ? AND cm.agent != ? AND a.display_name = ?
+    `).get(channel, agentId, myName);
+    if (dup) {
+      throw new HttpError(
+        409, 'name_conflict',
+        `display_name "${myName}" 已被频道 "${channel}" 的成员使用，先 anotify rename 换名`
+      );
+    }
+    const r = db.prepare(
+      'INSERT OR IGNORE INTO channel_members (channel, agent, joined_at) VALUES (?, ?, ?)'
+    ).run(channel, agentId, now());
+    return r.changes > 0;
+  }
+
+  function listMembers(channel) {
+    return db.prepare(`
+      SELECT cm.agent AS agent_id, a.display_name, cm.joined_at
+      FROM channel_members cm
+      JOIN agents a ON a.id = cm.agent
+      WHERE cm.channel = ?
+      ORDER BY cm.joined_at
+    `).all(channel);
   }
 
   // ---- channels ----
@@ -85,21 +226,23 @@ export function createStore(dbPath) {
     return { name, created_by: createdBy, created_at: ts };
   }
 
-  function listChannels(agent) {
+  function listChannels(agentId) {
     const rows = db.prepare(`
-      SELECT c.name, c.created_at, c.created_by,
+      SELECT c.name, c.created_at, c.created_by, ca.display_name AS created_by_name,
              (SELECT MAX(seq) FROM messages m WHERE m.channel = c.name) AS latest_seq,
              cu.cursor AS my_cursor
       FROM channels c
+      LEFT JOIN agents ca ON ca.id = c.created_by
       LEFT JOIN cursors cu ON cu.channel = c.name AND cu.agent = ?
       ORDER BY c.created_at
-    `).all(agent);
+    `).all(agentId);
     return rows.map((r) => {
       const latest = r.latest_seq ?? 0;
       return {
         name: r.name,
         created_at: r.created_at,
         created_by: r.created_by,
+        created_by_name: r.created_by_name ?? r.created_by,
         latest_seq: latest,
         my_cursor: r.my_cursor ?? null,
         pending: r.my_cursor == null ? null : Math.max(0, latest - r.my_cursor),
@@ -135,29 +278,30 @@ export function createStore(dbPath) {
 
   function messagesSince(channel, since, limit) {
     return db.prepare(`
-      SELECT seq, sender, content_type, content, reply_to, created_at
-      FROM messages
-      WHERE channel = ? AND seq > ?
-      ORDER BY seq
+      SELECT m.seq, m.sender, a.display_name AS sender_name,
+             m.content_type, m.content, m.reply_to, m.created_at
+      FROM messages m
+      LEFT JOIN agents a ON a.id = m.sender
+      WHERE m.channel = ? AND m.seq > ?
+      ORDER BY m.seq
       LIMIT ?
     `).all(channel, since, limit);
   }
 
   // ---- cursors（DESIGN §4.2/§4.5/§5：fetch 不动游标，仅 ACK 推进）----
 
-  function getCursorRow(channel, agent) {
+  function getCursorRow(channel, agentId) {
     return db.prepare('SELECT cursor, updated_at FROM cursors WHERE channel = ? AND agent = ?')
-      .get(channel, agent);
+      .get(channel, agentId);
   }
 
   /**
    * 首次拉取时初始化游标（§5）：
    * cursor = 最近一条「早于 10 分钟前」的消息 seq（没有则为 0），
    * 效果即新订阅者恰好可见最近 10 分钟内的消息。
-   * 已存在则原样返回，initialized=false。
    */
-  function ensureCursor(channel, agent) {
-    const existing = getCursorRow(channel, agent);
+  function ensureCursor(channel, agentId) {
+    const existing = getCursorRow(channel, agentId);
     if (existing) return { cursor: existing.cursor, initialized: false };
     const cutoff = now() - CURSOR_INIT_WINDOW_SECONDS;
     const base = db.prepare(
@@ -165,29 +309,32 @@ export function createStore(dbPath) {
     ).get(channel, cutoff).s;
     // 并发首拉时可能撞主键，OR IGNORE 后重读即可
     db.prepare('INSERT OR IGNORE INTO cursors (channel, agent, cursor, updated_at) VALUES (?, ?, ?, ?)')
-      .run(channel, agent, base, now());
-    return { cursor: getCursorRow(channel, agent).cursor, initialized: true };
+      .run(channel, agentId, base, now());
+    return { cursor: getCursorRow(channel, agentId).cursor, initialized: true };
   }
 
   /**
    * ACK 推进水位线（§4.2 原则三）：
-   * - 只进不退（MAX）
-   * - 钳制到 latest_seq，防止误 ACK 越过尚未存在的 seq 导致静默跳过未来消息
+   * 只进不退（MAX），且钳制到 latest_seq，防止静默跳过未来消息。
    */
-  function setCursor(channel, agent, through) {
+  function setCursor(channel, agentId, through) {
     const target = Math.min(through, latestSeq(channel));
     db.prepare(`
       INSERT INTO cursors (channel, agent, cursor, updated_at) VALUES (?, ?, ?, ?)
       ON CONFLICT(channel, agent) DO UPDATE
       SET cursor = MAX(cursor, excluded.cursor), updated_at = excluded.updated_at
-    `).run(channel, agent, target, now());
-    return getCursorRow(channel, agent).cursor;
+    `).run(channel, agentId, target, now());
+    return getCursorRow(channel, agentId).cursor;
   }
 
   return {
     close: () => db.close(),
     createAgent,
     verifyAgent,
+    getAgentRow,
+    renameAgent,
+    ensureMember,
+    listMembers,
     hasChannel,
     createChannel,
     listChannels,

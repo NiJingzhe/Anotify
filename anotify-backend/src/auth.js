@@ -1,7 +1,7 @@
 // Bearer token 认证（设计见 DESIGN.md §3）
 import { HttpError } from './schemas.js';
 
-/** Hono 中间件：校验 Authorization: Bearer <token>，通过后 c.set('agent', agentId) */
+/** Hono 中间件：校验 Authorization: Bearer <token>，通过后 c.set('agentId'/'agentName') */
 export function requireAuth(store) {
   return async (c, next) => {
     const m = /^Bearer\s+(.+)$/i.exec(c.req.header('authorization') ?? '');
@@ -13,7 +13,8 @@ export function requireAuth(store) {
     if (!agent) {
       throw new HttpError(401, 'unauthorized', 'invalid token');
     }
-    c.set('agent', agent);
+    c.set('agentId', agent.id);
+    c.set('agentName', agent.display_name);
     await next();
   };
 }

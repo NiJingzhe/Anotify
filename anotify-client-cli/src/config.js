@@ -8,13 +8,14 @@ const CRED_FILE = join(CONFIG_DIR, 'credentials.toml');
 
 /**
  * 读取凭证。环境变量 ANOTIFY_SERVER / ANOTIFY_TOKEN 优先于配置文件。
- * 返回 { server, agent, token }（字段可能为 undefined）。
+ * 返回 { server, agent, agent_id, token }（字段可能为 undefined）。
  */
 export function loadCredentials() {
   const base = existsSync(CRED_FILE) ? parseToml(readFileSync(CRED_FILE, 'utf8')) : {};
   return {
     server: process.env.ANOTIFY_SERVER ?? base.server,
     agent: base.agent,
+    agent_id: base.agent_id,
     token: process.env.ANOTIFY_TOKEN ?? base.token,
   };
 }
@@ -29,11 +30,12 @@ export function requireCredentials() {
 }
 
 /** 保存凭证（0600 权限），返回文件路径 */
-export function saveCredentials({ server, agent, token }) {
+export function saveCredentials({ server, agent, agent_id, token }) {
   mkdirSync(CONFIG_DIR, { recursive: true });
   const toml = [
     `server = ${tomlString(server)}`,
     `agent = ${tomlString(agent)}`,
+    `agent_id = ${tomlString(agent_id ?? '')}`,
     `token = ${tomlString(token)}`,
     '',
   ].join('\n');

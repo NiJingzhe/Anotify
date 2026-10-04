@@ -19,7 +19,22 @@ process.stdout?.on('error', (e) => {
 program
   .name('anotify')
   .description('Anotify: channel-based messaging for agents')
-  .version('0.1.0');
+  .version('0.2.0');
+
+// 管道下游提前退出（如 `anotify recv ... | head`）时安静收场，不打堆栈
+process.stdout?.on('error', (e) => {
+  if (e.code === 'EPIPE') process.exit(0);
+  throw e;
+});
+
+function printMessage(m) {
+  const time = new Date(m.created_at * 1000).toTimeString().slice(0, 8);
+  const reply = m.reply_to != null ? `  ↳#${m.reply_to}` : '';
+  console.log(`#${m.seq}  ${m.sender_name ?? m.sender}  ${time}${reply}`);
+  for (const line of String(m.content).split('\n')) {
+    console.log(`  ${line}`);
+  }
+}
 
 /** 统一错误出口 */
 async function run(fn) {
@@ -57,15 +72,6 @@ function readStdin() {
   });
 }
 
-function printMessage(m) {
-  const time = new Date(m.created_at * 1000).toTimeString().slice(0, 8);
-  const reply = m.reply_to != null ? `  ↳#${m.reply_to}` : '';
-  console.log(`#${m.seq}  ${m.sender}  ${time}${reply}`);
-  for (const line of String(m.content).split('\n')) {
-    console.log(`  ${line}`);
-  }
-}
-
 // ---------- 身份 ----------
 
 program
@@ -73,12 +79,16 @@ program
   .description('注册 agent 身份并保存凭证（token 仅此一次显示）')
   .requiredOption('--server <url>', '服务端地址', process.env.ANOTIFY_SERVER ?? 'http://localhost:8000')
   .action((name, opts) => run(async () => {
-    const { agent_id, token } = await api({ server: opts.server }, 'POST', '/v1/agents', {
+    const resp = await api({ server: opts.server }, 'POST', '/v1/agents', {
       body: { name },
     });
-    const file = saveCredentials({ server: opts.server, agent: agent_id, token });
-    console.log(`✓ 身份已创建: ${agent_id}`);
-    console.log(`  token: ${token}`);
+    const file = saveCredentials({
+      server: opts.server, agent: resp.display_name, agent_id: resp.agent_id, token: resp.token,
+    });
+    console.log('✓ 身份已创建');
+    console.log(`  id   : ${resp.agent_id}  （不可变，全服唯一）`);
+    console.log(`  name : ${resp.display_name}  （display_name，可用 anotify rename 修改）`);
+    console.log(`  token: ${resp.token}`);
     console.log(`  （已保存到 ${file}，请勿泄露）`);
   }));
 
@@ -93,11 +103,53 @@ program
     }
     // 权威身份来自服务端对 token 的解析，而非本地文件记录
     const me = await api(cred, 'GET', '/v1/agents/me');
-    console.log(`agent : ${me.agent_id}`);
+    console.log(`id   : ${me.agent_id}`);
+    console.log(`name : ${me.display_name}`);
     console.log(`server: ${cred.server}`);
     console.log('token : ✓ 有效');
-    if (cred.agent && cred.agent !== me.agent_id) {
-      console.log(`⚠ 本地凭证文件记录的是 "${cred.agent}"，但当前生效身份是 "${me.agent_id}"（ANOTIFY_TOKEN 环境变量优先）。`);
+    if (cred.agent && cred.agent !== me.display_name) {
+      console.log(`⚠ 本地凭证文件记录的名字是 "${cred.agent}"，服务端实际为 "${me.display_name}"。`);
+    }
+  }));
+
+program
+  .command('rename <new-name>')
+  .description('修改 display_name（agent_id 不变；与已加入频道的成员重名会被拒绝）')
+  .action((newName) => run(async () => {
+    const cred = requireCredentials();
+    const resp = await api(cred, 'PATCH', '/v1/agents/me', { body: { display_name: newName } });
+    console.log(`✓ 已改名: ${resp.display_name}（id 不变: ${resp.agent_id}）`);
+  }));
+
+program
+  .command('join <channel>')
+  .description('加入频道名册（首次发言也会自动加入）')
+  .action((chName) => run(async () => {
+    const cred = requireCredentials();
+    const resp = await api(cred, 'POST', `/v1/channels/${encodeURIComponent(chName)}/join`);
+    console.log(resp.joined
+      ? `✓ 已加入 ${resp.channel}`
+      : `(早已是 ${resp.channel} 成员)`);
+  }));
+
+program
+  .command('members <channel>')
+  .description('查看频道名册')
+  .option('-o, --output <fmt>', '输出格式: text|json', 'text')
+  .action((chName, opts) => run(async () => {
+    const cred = requireCredentials();
+    const resp = await api(cred, 'GET', `/v1/channels/${encodeURIComponent(chName)}/members`);
+    if (opts.output === 'json') {
+      console.log(JSON.stringify(resp, null, 2));
+      return;
+    }
+    if (resp.members.length === 0) {
+      console.log('(名册为空)');
+      return;
+    }
+    for (const m of resp.members) {
+      const t = new Date(m.joined_at * 1000).toISOString().slice(0, 16).replace('T', ' ');
+      console.log(`${m.display_name.padEnd(20)} ${m.agent_id}  (joined ${t})`);
     }
   }));
 
@@ -110,7 +162,7 @@ channel
   .action((name) => run(async () => {
     const cred = requireCredentials();
     const resp = await api(cred, 'POST', '/v1/channels', { body: { name } });
-    console.log(`✓ 频道已创建: ${resp.name}（by ${resp.created_by}）`);
+    console.log(`✓ 频道已创建: ${resp.name}（by ${resp.created_by_name}）`);
   }));
 
 program
@@ -131,7 +183,7 @@ program
     const pad = (s, n) => String(s ?? '-').padEnd(n);
     console.log(`${pad('CHANNEL', 20)}${pad('LATEST', 8)}${pad('CURSOR', 8)}${pad('PENDING', 8)}CREATED_BY`);
     for (const ch of resp.channels) {
-      console.log(`${pad(ch.name, 20)}${pad(ch.latest_seq, 8)}${pad(ch.my_cursor, 8)}${pad(ch.pending, 8)}${ch.created_by}`);
+      console.log(`${pad(ch.name, 20)}${pad(ch.latest_seq, 8)}${pad(ch.my_cursor, 8)}${pad(ch.pending, 8)}${ch.created_by_name ?? ch.created_by}`);
     }
   }));
 
@@ -158,7 +210,7 @@ program
     const resp = await api(cred, 'POST', `/v1/channels/${encodeURIComponent(chName)}/messages`, {
       body: { content, content_type, reply_to: opts.replyTo },
     });
-    console.log(`✓ 已发布到 ${resp.channel}: seq=${resp.seq} sender=${resp.sender}`);
+    console.log(`✓ 已发布到 ${resp.channel}: seq=${resp.seq} sender=${resp.sender_name ?? resp.sender}`);
   }));
 
 program

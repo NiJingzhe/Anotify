@@ -33,12 +33,16 @@ const v1 = new Hono();
 
 // ---------- 公开路由 ----------
 
-// POST /v1/agents —— 注册身份（§6.1）
+// POST /v1/agents —— 注册身份（§6.1）：agent_id 服务端生成且不可变
 v1.post('/agents', async (c) => {
   const body = await parseJson(c);
-  const name = assertName(body?.name, 'name');
-  const result = store.createAgent(name);
-  return c.json({ agent_id: result.agent_id, token: result.token }, 201);
+  const displayName = assertName(body?.name, 'name');
+  const result = store.createAgent(displayName);
+  return c.json({
+    agent_id: result.agent_id,
+    display_name: result.display_name,
+    token: result.token,
+  }, 201);
 });
 
 // ---------- 以下路由需要认证 ----------
@@ -46,21 +50,52 @@ v1.post('/agents', async (c) => {
 const authed = new Hono();
 authed.use('*', requireAuth(store));
 
-// GET /v1/agents/me —— 当前认证身份（whoami / 多 agent 共机调试用）
-authed.get('/agents/me', (c) => c.json({ agent_id: c.get('agent') }));
+// GET /v1/agents/me —— 当前认证身份（§6.1.1）
+authed.get('/agents/me', (c) => {
+  return c.json({ agent_id: c.get('agentId'), display_name: c.get('agentName') });
+});
+
+// PATCH /v1/agents/me —— 改名（§6.1.1）：只改显示视图，历史引用不受影响
+authed.patch('/agents/me', async (c) => {
+  const body = await parseJson(c);
+  const displayName = assertName(body?.display_name, 'display_name');
+  const result = store.renameAgent(c.get('agentId'), displayName);
+  return c.json(result);
+});
 
 // POST /v1/channels —— 创建频道（§6.2）
 authed.post('/channels', async (c) => {
   const body = await parseJson(c);
   const name = assertName(body?.name, 'name');
-  const agent = c.get('agent');
-  const ch = store.createChannel(name, agent);
-  return c.json({ name: ch.name, created_at: ch.created_at, created_by: ch.created_by }, 201);
+  const agentId = c.get('agentId');
+  const ch = store.createChannel(name, agentId);
+  // 创建者自动入册
+  store.ensureMember(name, agentId);
+  return c.json({
+    name: ch.name,
+    created_at: ch.created_at,
+    created_by: ch.created_by,
+    created_by_name: c.get('agentName'),
+  }, 201);
+});
+
+// POST /v1/channels/:ch/join —— 显式加入频道名册（§3）
+authed.post('/channels/:ch/join', (c) => {
+  const ch = requireChannel(c);
+  const agentId = c.get('agentId');
+  const joined = store.ensureMember(ch, agentId);
+  return c.json({ channel: ch, agent_id: agentId, joined });
+});
+
+// GET /v1/channels/:ch/members —— 频道名册
+authed.get('/channels/:ch/members', (c) => {
+  const ch = requireChannel(c);
+  return c.json({ channel: ch, members: store.listMembers(ch) });
 });
 
 // GET /v1/channels —— 频道列表 + 自己视角的游标/积压（§6.7）
 authed.get('/channels', (c) => {
-  return c.json({ channels: store.listChannels(c.get('agent')) });
+  return c.json({ channels: store.listChannels(c.get('agentId')) });
 });
 
 // 频道必须已显式创建，否则 404，不隐式创建（§6.3）
@@ -72,10 +107,10 @@ function requireChannel(c) {
   return ch;
 }
 
-// POST /v1/channels/:ch/messages —— 发布消息（§6.3）
+// POST /v1/channels/:ch/messages —— 发布消息（§6.3）：首次发言自动入册
 authed.post('/channels/:ch/messages', async (c) => {
   const ch = requireChannel(c);
-  const agent = c.get('agent');
+  const agentId = c.get('agentId');
   const body = validateMessageBody(await parseJson(c));
   if (body.reply_to !== undefined && !store.hasMessage(ch, body.reply_to)) {
     throw new HttpError(
@@ -83,11 +118,13 @@ authed.post('/channels/:ch/messages', async (c) => {
       `reply_to seq ${body.reply_to} not found in channel "${ch}"`
     );
   }
-  const msg = store.insertMessage({ channel: ch, sender: agent, ...body });
+  store.ensureMember(ch, agentId); // 名册重名校验在此发生（§3）
+  const msg = store.insertMessage({ channel: ch, sender: agentId, ...body });
   return c.json({
     channel: ch,
     seq: msg.seq,
-    sender: agent,
+    sender: agentId,
+    sender_name: c.get('agentName'),
     content: body.content,
     content_type: body.content_type,
     reply_to: body.reply_to ?? null,
@@ -98,7 +135,7 @@ authed.post('/channels/:ch/messages', async (c) => {
 // GET /v1/channels/:ch/messages —— 拉取消息，支持长轮询（§6.4）
 authed.get('/channels/:ch/messages', async (c) => {
   const ch = requireChannel(c);
-  const agent = c.get('agent');
+  const agentId = c.get('agentId');
   const q = c.req.query();
 
   // since 显式传入 = 临时覆盖，仅本次生效、不动游标（§4.5）；
@@ -108,7 +145,7 @@ authed.get('/channels/:ch/messages', async (c) => {
   if (q.since !== undefined) {
     base = assertInt(q.since, { min: 0, label: 'since' });
   } else {
-    ({ cursor: base, initialized } = store.ensureCursor(ch, agent));
+    ({ cursor: base, initialized } = store.ensureCursor(ch, agentId));
   }
 
   const wait = assertInt(q.wait ?? 0, { min: 0, max: 60, label: 'wait' });
@@ -135,18 +172,18 @@ authed.post('/channels/:ch/ack', async (c) => {
   const ch = requireChannel(c);
   const body = await parseJson(c);
   const through = assertInt(body?.through, { min: 0, label: 'through' });
-  const cursor = store.setCursor(ch, c.get('agent'), through);
+  const cursor = store.setCursor(ch, c.get('agentId'), through);
   return c.json({ channel: ch, cursor });
 });
 
 // GET /v1/channels/:ch/cursor —— 查看游标（§6.6）
 authed.get('/channels/:ch/cursor', (c) => {
   const ch = requireChannel(c);
-  const agent = c.get('agent');
-  const row = store.getCursorRow(ch, agent);
+  const agentId = c.get('agentId');
+  const row = store.getCursorRow(ch, agentId);
   return c.json({
     channel: ch,
-    agent,
+    agent: agentId,
     cursor: row ? row.cursor : null,
     updated_at: row ? row.updated_at : null,
   });

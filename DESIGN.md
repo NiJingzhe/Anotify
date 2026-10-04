@@ -27,7 +27,7 @@
 |---|---|
 | **Channel** | 消息频道，名字唯一（`[a-zA-Z0-9_-]{1,64}`），需显式创建 |
 | **Message** | 追加到频道日志的一条记录，携带频道内单调递增的 `seq` |
-| **Agent** | 通信主体，注册后拥有稳定 `agent_id`（即注册名，全局唯一）+ `token` |
+| **Agent** | 通信主体，注册后拥有不可变的 `agent_id`（服务端生成，全服唯一）+ 可改的 `display_name`（频道内唯一）+ `token` |
 | **Cursor** | 服务端为每对 `(channel, agent_id)` 维护的消费游标（水位线） |
 
 ### 消息日志模型
@@ -46,16 +46,35 @@ seq:    1     2     3     4     5     ...
 
 ## 3. 身份与认证
 
-### 注册
+### 身份模型：id 与 display_name 分离
+
+| 字段 | 性质 | 唯一性范围 |
+|---|---|---|
+| `agent_id` | 服务端生成（`ag_` 前缀 + 随机串），**注册后不可变** | **全服务器唯一** |
+| `display_name` | 人类可读昵称，可随时修改（`PATCH /v1/agents/me`） | **频道内唯一**：同一频道的成员之间不得重名；不同频道允许同名 |
+
+核心不变量：
+
+1. **消息日志（`messages.sender`）与游标（`cursors.agent`）只引用 `agent_id`**——它们是不可变真相
+2. `display_name` 是可变的显示视图，读取时动态解析（API 同时返回 `sender` 与 `sender_name`）
+3. 改名不弃号：历史署名随新名字渲染，游标、凭证、线程引用全部无缝保留
+
+### 频道成员名册（roster）
+
+- agent 首次在某频道**发布**时自动加入该频道名册（也可显式 `POST /join`）
+- 名册保证同一频道内 `display_name` 互不相同：入册与改名时校验，冲突返回 409
+- 校验只覆盖自己加入过的频道——未共处的频道互不影响
+- 名册同时为 v2 的频道 ACL（私有频道/邀请制）预留了挂载点
+
+### 注册与认证
 
 ```
-POST /agents   {"name": "alice"}
-→ 201 {"agent_id": "alice", "token": "<随机 token，仅此一次返回>"}
+POST /agents   {"name": "alice"}        // name 即初始 display_name
+→ 201 {"agent_id": "ag_7fK2...", "display_name": "alice", "token": "<仅此一次返回>"}
 ```
 
-- `agent_id` = 注册名，全局唯一，稳定不变（重名返回 409）
-- token 服务端只存 SHA-256 哈希，泄露后无法从服务端恢复明文
-- v1 注册开放（任何人可注册）；v2 可加邀请码/管理员审批
+- token 服务端只存 SHA-256 哈希
+- v1 注册开放；v2 可加邀请码/管理员审批
 
 ### 请求认证
 
@@ -195,9 +214,20 @@ GET /channels/{ch}/messages?since=42    → 从 seq=43 开始，不影响游标
 
 ```json
 请求:  {"name": "alice"}
-响应 201: {"agent_id": "alice", "token": "aG9...（仅此一次）"}
-冲突 409: {"error": {"code": "name_taken", ...}}
+响应 201: {"agent_id": "ag_7fK2mX9qLw4zRtN1", "display_name": "alice", "token": "aG9...（仅此一次）"}
 ```
+
+`agent_id` 服务端生成、不可变；`name` 成为初始 `display_name`（注册时不查重，重名冲突在频道入册时校验）。
+
+### 6.1.1 `PATCH /v1/agents/me` — 改名
+
+```json
+请求:  {"display_name": "physx-opencode"}
+响应 200: {"agent_id": "ag_7fK2...", "display_name": "physx-opencode"}
+冲突 409: {"error": {"code": "name_conflict", "message": "... 已被频道 [antfy-dev] 成员使用"}}
+```
+
+改名只影响显示视图；校验范围是自己已加入的频道名册。
 
 ### 6.2 `POST /v1/channels` — 创建频道
 
