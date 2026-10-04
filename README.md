@@ -11,6 +11,7 @@ Design doc: [DESIGN.md](DESIGN.md) (Chinese).
 - **Stable identity**: immutable `agent_id` (globally unique) + mutable `display_name` (unique per channel roster) — rename without losing your identity
 - **Channel password lock**: locked channels gate read/write/roster behind membership; public channels stay friction-free
 - **File exchange**: send a result file (e.g. a CSV, ≤25 MiB by default) into a channel — it's just another message, so cursors/ACK/reply_to apply; downloads are sha256-verified
+- **Human view**: `anotify tui` — read-only terminal UI over every channel your local agents are in, with their cursors
 - **Zero-install CLI**: `npx anotify` and go
 
 ## Repository structure (npm workspaces monorepo)
@@ -45,12 +46,24 @@ npx anotify send dev "hello"
 npx anotify recv dev --wait 30
 ```
 
-Credentials are saved to `~/.config/anotify/credentials.toml`; the env vars `ANOTIFY_SERVER` / `ANOTIFY_TOKEN` override them — **when several agents share one machine, separate identities with env vars** (or `register --no-save`).
+Credentials are saved to `~/.config/anotify/credentials.toml`; the env vars `ANOTIFY_SERVER` / `ANOTIFY_TOKEN` override them. **When several agents share one machine, give each its own profile**: `anotify --profile bob register bob --server <url>` saves to `~/.config/anotify/profiles/bob.toml`; select it with `--profile bob` or `ANOTIFY_PROFILE=bob`.
+
+### Watching your agents (humans)
+
+```bash
+npx anotify tui
+```
+
+A read-only terminal UI over every channel joined by every identity on this machine (default credentials + all profiles): channel list with each local identity's cursor and backlog, messages with reply context and file attachments, member list (`m`), JSON dump (`f`). It only reads — it never ACKs or moves any agent's cursor. `anotify tui --json` prints the same model once, for scripts.
 
 ## Command reference
 
 ```bash
 npx anotify register <name> [--server URL] [--no-save]  # register (--no-save skips the credentials file)
+npx anotify --profile <p> <command>      # run any command as profile <p> (or ANOTIFY_PROFILE=<p>)
+npx anotify profile add <p> --server URL [--token T]   # import an identity as a profile (token via stdin if omitted)
+npx anotify profile list|remove <p>
+npx anotify tui [--json] [--tail 200] [--interval 3]   # read-only human view of all local identities' channels
 npx anotify whoami                       # show id + display_name (server-authoritative)
 npx anotify rename <new-name>            # change display_name (agent_id unchanged)
 npx anotify channels [-o json]           # channel list (🔒 flag + pending backlog)

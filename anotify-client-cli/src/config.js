@@ -1,17 +1,32 @@
 // CLI 凭证管理（设计见 DESIGN.md §7）
-import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync, readdirSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 const CONFIG_DIR = join(homedir(), '.config', 'anotify');
 const CRED_FILE = join(CONFIG_DIR, 'credentials.toml');
+const PROFILES_DIR = join(CONFIG_DIR, 'profiles');
+
+/** profile 名与 agent 名同一规则；default 指 credentials.toml */
+const PROFILE_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+function profileFile(profile) {
+  if (!profile || profile === 'default') return CRED_FILE;
+  if (!PROFILE_RE.test(profile)) throw new Error(`Invalid profile name "${profile}" (1-64 chars of [A-Za-z0-9_-])`);
+  return join(PROFILES_DIR, `${profile}.toml`);
+}
 
 /**
- * 读取凭证。环境变量 ANOTIFY_SERVER / ANOTIFY_TOKEN 优先于配置文件。
+ * 读取凭证。来源优先级：环境变量 ANOTIFY_SERVER / ANOTIFY_TOKEN > ANOTIFY_PROFILE 指定的 profile > credentials.toml。
  * 返回 { server, agent, agent_id, token }（字段可能为 undefined）。
  */
 export function loadCredentials() {
-  const base = existsSync(CRED_FILE) ? parseToml(readFileSync(CRED_FILE, 'utf8')) : {};
+  const profile = process.env.ANOTIFY_PROFILE;
+  const file = profileFile(profile);
+  if (profile && profile !== 'default' && !existsSync(file)) {
+    throw new Error(`Profile "${profile}" not found (anotify profile list)`);
+  }
+  const base = existsSync(file) ? parseToml(readFileSync(file, 'utf8')) : {};
   return {
     server: process.env.ANOTIFY_SERVER ?? base.server,
     agent: base.agent,
@@ -29,9 +44,10 @@ export function requireCredentials() {
   return cred;
 }
 
-/** 保存凭证（0600 权限），返回文件路径 */
-export function saveCredentials({ server, agent, agent_id, token }) {
-  mkdirSync(CONFIG_DIR, { recursive: true });
+/** 保存凭证（0600 权限），返回文件路径；profile 缺省写 credentials.toml */
+export function saveCredentials({ server, agent, agent_id, token }, profile) {
+  const file = profileFile(profile);
+  mkdirSync(dirname(file), { recursive: true });
   const toml = [
     `server = ${tomlString(server)}`,
     `agent = ${tomlString(agent)}`,
@@ -39,9 +55,38 @@ export function saveCredentials({ server, agent, agent_id, token }) {
     `token = ${tomlString(token)}`,
     '',
   ].join('\n');
-  writeFileSync(CRED_FILE, toml, { mode: 0o600 });
-  chmodSync(CRED_FILE, 0o600);
-  return CRED_FILE;
+  writeFileSync(file, toml, { mode: 0o600 });
+  chmodSync(file, 0o600);
+  return file;
+}
+
+/**
+ * 本机全部身份：credentials.toml（profile "default"）+ profiles/*.toml，
+ * 外加环境变量 ANOTIFY_TOKEN 指定的身份（profile "env"）。缺 server/token 的条目跳过。
+ */
+export function listProfiles() {
+  const out = [];
+  if (existsSync(CRED_FILE)) out.push({ profile: 'default', file: CRED_FILE, ...parseToml(readFileSync(CRED_FILE, 'utf8')) });
+  if (existsSync(PROFILES_DIR)) {
+    for (const f of readdirSync(PROFILES_DIR).sort()) {
+      const m = /^(.+)\.toml$/.exec(f);
+      if (!m || !PROFILE_RE.test(m[1]) || m[1] === 'default') continue;
+      const file = join(PROFILES_DIR, f);
+      out.push({ profile: m[1], file, ...parseToml(readFileSync(file, 'utf8')) });
+    }
+  }
+  if (process.env.ANOTIFY_TOKEN && process.env.ANOTIFY_SERVER) {
+    out.push({ profile: 'env', file: null, server: process.env.ANOTIFY_SERVER, token: process.env.ANOTIFY_TOKEN });
+  }
+  return out.filter((p) => p.server && p.token);
+}
+
+export function removeProfile(profile) {
+  if (!profile || profile === 'default') throw new Error('Refusing to remove the default credentials file');
+  const file = profileFile(profile);
+  if (!existsSync(file)) throw new Error(`Profile "${profile}" not found`);
+  rmSync(file);
+  return file;
 }
 
 function tomlString(s) {

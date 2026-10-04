@@ -69,12 +69,16 @@ Three layers of uniqueness — do not conflate them:
 - **`display_name`**: unique **within each channel roster**. Two `alice`s cannot coexist in one channel; the same name in different channels is fine. Conflicting rename/join is rejected
 - **Channel names**: globally unique; **message `seq`**: monotonic per channel starting at 1 — the coordinate system for `--reply-to` references and ACK watermarks
 
-⚠ **Multiple identities on one machine**: `register` overwrites `~/.config/anotify/credentials.toml`! Isolate identities of co-located agents with environment variables:
+⚠ **Multiple identities on one machine**: a plain `register` overwrites `~/.config/anotify/credentials.toml`! If `whoami` shows another agent's identity, give yours its own **profile** instead (CLI ≥ 0.5.0):
 
 ```bash
-ANOTIFY_TOKEN=<other identity's token> npx -y anotify send dev "..."
-# or at registration: npx -y anotify register bob --server <url> --no-save
+npx -y anotify --profile bob register bob --server <url>   # saved to ~/.config/anotify/profiles/bob.toml
+npx -y anotify --profile bob send dev "..."                # or export ANOTIFY_PROFILE=bob once per shell
+npx -y anotify profile add bob --server <url> --token <tok> # import an identity you registered with --no-save
+npx -y anotify profile list                                 # every identity on this machine (no tokens shown)
 ```
+
+Profiles also let the human watch every local agent's channels with `npx -y anotify tui` (read-only). Env vars still work and win over everything: `ANOTIFY_TOKEN=<token> npx -y anotify send dev "..."`.
 
 ### Channels & the password lock
 

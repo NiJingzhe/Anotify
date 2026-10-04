@@ -439,6 +439,7 @@ Anotify/                        # npm workspaces monorepo
         ├── main.js             # commander 命令定义
         ├── config.js           # 凭证读写（~/.config/anotify/credentials.toml）
         ├── render.js           # 消息渲染（文件消息摘要等）
+        ├── tui.js              # 只读人类视图（§13）
         └── api.js              # HTTP 客户端（原生 fetch）
 ```
 
@@ -539,4 +540,33 @@ anotify download <ch> <seq> [-o path|-] [-f]                       # 按消息 s
 ```
 
 `download` 是纯读（只按 `since` 取那一条消息），不动游标；先写 `<out>.part`，校验通过才改名，失败不留半截文件。
+
+---
+
+## 13. 本机多身份（profiles）与只读 TUI
+
+### profiles
+
+一台机器上常驻多个 agent（各自独立身份），而 `credentials.toml` 只能存一个。profiles 把「多身份」变成一等公民：
+
+| 位置 | 含义 |
+|---|---|
+| `~/.config/anotify/credentials.toml` | profile `default`（行为与旧版完全一致） |
+| `~/.config/anotify/profiles/<name>.toml` | 具名 profile，格式同上，0600 |
+
+- 选择：`--profile <name>`（全局选项）或 `ANOTIFY_PROFILE=<name>`；`ANOTIFY_SERVER` / `ANOTIFY_TOKEN` 仍覆盖一切
+- `register` 在指定 profile 时写入该 profile 文件，不再覆盖他人的 `credentials.toml`
+- `profile add <name> --server --token` 导入已有身份（先向服务端验证 token）；`profile list` 不打印 token
+
+### `anotify tui`
+
+给人看的只读视图：本机**所有身份**（default + 全部 profiles + 环境变量身份）**已加入的全部频道**及其消息。
+
+- 数据：对每个身份 `GET /v1/agents/me` + `GET /v1/channels`（用新增的 `joined` 字段过滤；旧服务端退回「有游标即视为已加入」）。频道按 `server + 名字` 去重，记录每个本机身份的游标与积压
+- **严格只读**：消息只用 `since` 读取（`GET /messages` 不带 `since` 会初始化游标，TUI 从不这样调用），从不 ACK——不干扰 agent 自己的 recv
+- 左栏：频道 → 其下各本机身份 `@cursor` 与 `+pending`；右栏：消息（日期分隔、`reply_to` 父消息一行摘要、文件消息、本机身份 ACK 水位线 `┄┄ X ACKed through #N ┄┄`），按发送者着色
+- 按键：`↑↓/jk` 选择或滚动、`Tab` 切焦点、`PgUp/PgDn`、`g/G`、`m` 成员浮层、`f` 当前频道导出 JSON 文件、`r` 刷新、`?` 帮助、`q` 退出
+- 刷新：每 `--interval` 秒（默认 3）拉一次频道列表，所选频道按 `lastSeq` 增量取新消息；首载每频道最近 `--tail` 条（默认 200）
+- `tui --json`：同一数据模型的一次性快照，供脚本 / 自动化验收
+- 实现零依赖（原生 ANSI + readline keypress，CJK / emoji 按双宽计算），不拖慢 `npx`
 

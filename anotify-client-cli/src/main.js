@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { loadCredentials, requireCredentials, saveCredentials } from './config.js';
+import { loadCredentials, requireCredentials, saveCredentials, listProfiles, removeProfile } from './config.js';
 import { createWriteStream, existsSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
 import { basename } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -25,7 +25,12 @@ process.stdout?.on('error', (e) => {
 program
   .name('anotify')
   .description('Anotify: channel-based messaging for agents')
-  .version('0.4.0');
+  .version('0.5.0')
+  .option('--profile <name>', 'Use a saved identity profile (same as ANOTIFY_PROFILE; see anotify profile list)')
+  .hook('preAction', () => {
+    const { profile } = program.opts();
+    if (profile) process.env.ANOTIFY_PROFILE = profile;
+  });
 
 // 管道下游提前退出（如 `anotify recv ... | head`）时安静收场，不打堆栈
 process.stdout?.on('error', (e) => {
@@ -104,13 +109,62 @@ program
     console.log(`  name : ${resp.display_name}  (display name; change it with anotify rename)`);
     console.log(`  token: ${resp.token}`);
     if (opts.save === false) {
-      console.log('  (--no-save: credentials file untouched. Set ANOTIFY_SERVER / ANOTIFY_TOKEN env vars instead)');
+      console.log('  (--no-save: credentials file untouched. Set ANOTIFY_SERVER / ANOTIFY_TOKEN env vars, or import it later with anotify profile add)');
     } else {
       const file = saveCredentials({
         server: opts.server, agent: resp.display_name, agent_id: resp.agent_id, token: resp.token,
-      });
+      }, process.env.ANOTIFY_PROFILE);
       console.log(`  (Saved to ${file} — keep it private)`);
     }
+  }));
+
+// ---------- profiles：同一台机器上的多身份 ----------
+
+const profile = program
+  .command('profile')
+  .description('Manage local identity profiles (several agents on one machine; select one with --profile or ANOTIFY_PROFILE)');
+
+profile
+  .command('add <name>')
+  .description('Import an existing identity as a profile (token is verified against the server; reads it from stdin if --token is omitted)')
+  .requiredOption('--server <url>', 'Server URL')
+  .option('--token <token>', 'Agent token')
+  .action((name, opts) => run(async () => {
+    const token = (opts.token ?? (await readStdinIfPiped()) ?? '').trim();
+    if (!token) throw new Error('Missing token: pass --token or pipe it via stdin');
+    const me = await api({ server: opts.server, token }, 'GET', '/v1/agents/me');
+    const file = saveCredentials({ server: opts.server, agent: me.display_name, agent_id: me.agent_id, token }, name);
+    console.log(`✓ Profile ${name}: ${me.display_name} (${me.agent_id}) @ ${opts.server}`);
+    console.log(`  (Saved to ${file}; use it with anotify --profile ${name} … or ANOTIFY_PROFILE=${name})`);
+  }));
+
+profile
+  .command('list')
+  .description('List local identity profiles (tokens are never printed)')
+  .option('-o, --output <fmt>', 'Output format: text|json', 'text')
+  .action((opts) => run(async () => {
+    const rows = listProfiles().map(({ profile: p, agent, agent_id, server, file }) => ({
+      profile: p, agent: agent ?? null, agent_id: agent_id || null, server, file,
+    }));
+    if (opts.output === 'json') {
+      console.log(JSON.stringify({ profiles: rows }, null, 2));
+      return;
+    }
+    if (rows.length === 0) {
+      console.log('(No profiles. Register with anotify register, or import with anotify profile add)');
+      return;
+    }
+    const pad = (v, n) => String(v ?? '-').padEnd(n);
+    console.log(`${pad('PROFILE', 16)}${pad('AGENT', 20)}${pad('AGENT_ID', 24)}SERVER`);
+    for (const r of rows) console.log(`${pad(r.profile, 16)}${pad(r.agent, 20)}${pad(r.agent_id, 24)}${r.server}`);
+  }));
+
+profile
+  .command('remove <name>')
+  .description('Delete a profile file (the identity itself stays valid on the server)')
+  .action((name) => run(async () => {
+    const file = removeProfile(name);
+    console.log(`✓ Removed ${file}`);
   }));
 
 program
@@ -405,6 +459,23 @@ program
     console.log(resp.cursor == null
       ? `(Cursor not initialized: the first recv starts from messages newer than 10 minutes)`
       : `cursor=${resp.cursor}  updated_at=${new Date(resp.updated_at * 1000).toISOString()}`);
+  }));
+
+// ---------- 人类视图 ----------
+
+program
+  .command('tui')
+  .description('Read-only terminal UI for humans: every channel joined by every local identity, with messages and cursors (never ACKs)')
+  .option('--json', 'Print one snapshot of the same model as JSON and exit (for scripts/tests)')
+  .option('--tail <n>', 'Messages loaded per channel', Number, 200)
+  .option('--interval <sec>', 'Refresh interval in seconds', Number, 3)
+  .action((opts) => run(async () => {
+    const { runTui, snapshot } = await import('./tui.js');
+    if (opts.json) {
+      console.log(JSON.stringify(await snapshot({ tail: opts.tail }), null, 2));
+      return;
+    }
+    await runTui({ tail: opts.tail, interval: opts.interval });
   }));
 
 // ---------- 服务 ----------
