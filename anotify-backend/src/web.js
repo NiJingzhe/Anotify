@@ -208,7 +208,7 @@ export function accountRoutes({ store, accounts, cfg, serveFile, requireAuth, re
     const user = await currentUser(c);
     const { locked } = await accounts.assertWebAccess(ch, user?.user_id);
     const row = await store.getChannelRow(ch);
-    const members = await store.listMembers(ch);
+    const members = await accounts.webMembers(ch, user);
     return c.json({
       name: ch,
       locked,
@@ -254,7 +254,7 @@ export function accountRoutes({ store, accounts, cfg, serveFile, requireAuth, re
     const limit = assertInt(q.limit ?? 50, { min: 1, max: 200, label: 'limit' });
     const before = q.before !== undefined ? assertInt(q.before, { min: 1, label: 'before' }) : undefined;
     const after = q.after !== undefined ? assertInt(q.after, { min: 0, label: 'after' }) : undefined;
-    const messages = await accounts.webMessages(ch, { before, after, limit });
+    const messages = await accounts.webMessages(ch, { before, after, limit, viewer: user });
     return c.json({ channel: ch, messages, latest_seq: await store.latestSeq(ch) });
   });
 
