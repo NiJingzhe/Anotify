@@ -163,8 +163,10 @@ body {
 :root {
   --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --glass: rgba(255, 255, 255, 0.58);
-  --glass-strong: rgba(255, 255, 255, 0.82);
+  --glass: rgba(255, 255, 255, 0.34);
+  --glass-strong: rgba(255, 255, 255, 0.46);
+  --glass-edge: rgba(255, 255, 255, 0.6);
+  --glass-blur: blur(18px) saturate(160%);
   --line: rgba(26, 31, 61, 0.14);
   --line-strong: rgba(26, 31, 61, 0.3);
   --danger: #b4233c;
@@ -313,16 +315,17 @@ code { font-family: var(--mono); font-size: 0.9em; }
   padding: 1.1rem 1.2rem;
   font-family: var(--sans);
   color: var(--ink);
-  background: var(--glass);
-  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.42);
+  border: 1px solid rgba(26, 31, 61, 0.18);
   border-radius: 16px;
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   box-shadow: 0 10px 34px rgba(26, 31, 61, 0.1);
   cursor: pointer;
   transition: transform 0.15s, box-shadow 0.15s, background 0.15s;
 }
-.channel-card:hover { transform: translateY(-2px); background: var(--glass-strong); box-shadow: 0 16px 40px rgba(26, 31, 61, 0.16); }
+.channel-card:hover { transform: translateY(-2px); background: rgba(255, 255, 255, 0.62); border-color: rgba(26, 31, 61, 0.5); box-shadow: 0 16px 40px rgba(26, 31, 61, 0.16); }
+.channel-card:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 .channel-card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
 .channel-card-name { font: 700 1.15rem var(--sans); overflow-wrap: anywhere; }
 .channel-card-stats { display: flex; flex-wrap: wrap; gap: 0.4rem; font-size: 0.85rem; color: var(--ink-soft); }
@@ -362,10 +365,10 @@ code { font-family: var(--mono); font-size: 0.9em; }
   justify-content: space-between;
   gap: 1rem;
   padding: 0.7rem 1.4rem;
-  background: rgba(255, 255, 255, 0.5);
-  border-bottom: 1px solid var(--line);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  background: rgba(255, 255, 255, 0.3);
+  border-bottom: 1px solid var(--glass-edge);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
 }
 .brand { font: 700 1.5rem var(--serif); text-decoration: none; letter-spacing: 0.01em; }
 .topnav { display: flex; align-items: center; gap: 1.1rem; font-size: 0.92rem; }
@@ -379,11 +382,11 @@ code { font-family: var(--mono); font-size: 0.9em; }
 
 .panel {
   background: var(--glass-strong);
-  border: 1px solid var(--line);
+  border: 1px solid var(--glass-edge);
   border-radius: 18px;
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  box-shadow: 0 18px 50px rgba(26, 31, 61, 0.14);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: 0 18px 50px rgba(26, 31, 61, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 
 /* ---------- 登录 / 注册 / 认领 ---------- */
@@ -472,10 +475,11 @@ code { font-family: var(--mono); font-size: 0.9em; }
 .side-card, .side-section {
   padding: 0.9rem 1rem;
   background: var(--glass);
-  border: 1px solid var(--line);
+  border: 1px solid var(--glass-edge);
   border-radius: 14px;
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: 0 10px 34px rgba(26, 31, 61, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.6);
 }
 .side-section.grow { flex: 1; min-height: 160px; }
 .side-section h3 { margin: 0 0 0.6rem; font: 700 0.78rem var(--sans); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-soft); }
@@ -498,7 +502,7 @@ code { font-family: var(--mono); font-size: 0.9em; }
   text-decoration: none;
 }
 .channel-list a:hover { background: rgba(255, 255, 255, 0.6); }
-.channel-list a.active { background: #fff; box-shadow: 0 2px 10px rgba(26, 31, 61, 0.08); }
+.channel-list a.active { background: rgba(255, 255, 255, 0.75); box-shadow: 0 2px 10px rgba(26, 31, 61, 0.08); }
 .ch-name { font-weight: 600; font-size: 0.93rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ch-meta { display: flex; align-items: center; gap: 0.4rem; }
 .ch-agents { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 0.25rem; }
@@ -552,12 +556,12 @@ code { font-family: var(--mono); font-size: 0.9em; }
 .msg {
   margin: 0.5rem 0;
   padding: 0.5rem 0.8rem 0.6rem;
-  background: rgba(255, 255, 255, 0.55);
-  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.65);
   border-left: 3px solid hsl(var(--hue) 55% 50%);
   border-radius: 8px;
 }
-.msg:hover { background: rgba(255, 255, 255, 0.8); }
+.msg:hover { background: rgba(255, 255, 255, 0.72); }
 .msg:target { background: rgba(255, 220, 120, 0.35); }
 .msg-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.2rem 0.5rem; margin-bottom: 0.25rem; }
 .sender { font-weight: 700; font-size: 0.8rem; letter-spacing: 0.01em; color: hsl(var(--hue) 55% 32%); }
@@ -704,3 +708,102 @@ code { font-family: var(--mono); font-size: 0.9em; }
 }
 .modal-confirm input:focus { border-color: var(--danger); box-shadow: 0 0 0 3px rgba(180, 35, 60, 0.12); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
+
+
+/* =====================================================================
+   v0.9：首页入口 / 频道卡片 morph 大框 / 统一的频道头部按钮
+   ===================================================================== */
+
+.agents-cta {
+  margin-top: 1.1rem;
+  padding: 0.45rem 1.1rem;
+  font: italic 600 1.05rem var(--serif);
+  letter-spacing: 0.03em;
+  color: var(--ink);
+  text-decoration: none;
+  background: rgba(255, 255, 255, 0.42);
+  border: 1px solid rgba(26, 31, 61, 0.22);
+  border-radius: 999px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 8px 28px rgba(26, 31, 61, 0.12);
+  transition: background 0.15s, border-color 0.15s, transform 0.15s;
+}
+.agents-cta:hover { background: rgba(255, 255, 255, 0.62); border-color: rgba(26, 31, 61, 0.8); transform: translateY(-1px); }
+.agents-cta span { display: inline-block; transition: transform 0.15s; }
+.agents-cta:hover span { transform: translateX(3px); }
+
+.channel-card-foot { display: flex; justify-content: flex-end; margin-top: auto; }
+.view-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font: italic 600 0.95rem var(--serif);
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.expand-icon { animation: breathe 2.4s ease-in-out infinite; transform-origin: center; }
+.channel-card:hover .expand-icon { animation-duration: 1.2s; }
+@keyframes breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.22); } }
+@media (prefers-reduced-motion: reduce) { .expand-icon { animation: none; } }
+
+html.overlay-open { overflow: hidden; }
+
+.overlay-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  background: rgba(26, 31, 61, 0);
+  transition: background 0.42s ease;
+}
+.overlay-backdrop.is-open { background: rgba(26, 31, 61, 0.22); }
+
+.overlay-frame {
+  position: fixed;
+  top: 10vh;
+  left: 10vw;
+  width: 80vw;
+  height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-family: var(--sans);
+  transition: top 0.42s cubic-bezier(0.2, 0.8, 0.2, 1), left 0.42s cubic-bezier(0.2, 0.8, 0.2, 1),
+    width 0.42s cubic-bezier(0.2, 0.8, 0.2, 1), height 0.42s cubic-bezier(0.2, 0.8, 0.2, 1),
+    border-radius 0.42s ease, opacity 0.3s ease, transform 0.42s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.overlay-frame.is-collapsed { border-radius: 16px; }
+.overlay-frame.is-collapsed.no-origin { opacity: 0; transform: scale(0.94); }
+.overlay-content { flex: 1; min-height: 0; display: flex; flex-direction: column; transition: opacity 0.25s ease 0.18s; }
+.overlay-frame.is-collapsed .overlay-content { opacity: 0; transition-delay: 0s; }
+.overlay-close {
+  position: absolute;
+  top: 0.55rem;
+  left: 0.6rem;
+  z-index: 1;
+  width: 1.8rem;
+  height: 1.8rem;
+  font-size: 1.2rem;
+  line-height: 1;
+  color: var(--ink-soft);
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.overlay-close:hover { color: var(--ink); background: rgba(255, 255, 255, 0.5); }
+.overlay-frame .channel-head { padding-left: 2.6rem; }
+
+@media (max-width: 720px) {
+  .overlay-frame { top: 3vh; left: 3vw; width: 94vw; height: 94vh; }
+}
+
+/* 频道头部按钮：Members / Copy join cmd / Close channel 同一形态 */
+.btn-accent-ghost { color: #2c3a8c; background: transparent; border-color: rgba(44, 58, 140, 0.45); }
+.btn-accent-ghost:hover:not(:disabled) { background: rgba(44, 58, 140, 0.08); border-color: #2c3a8c; }
+.btn-danger-ghost:disabled, .btn-accent-ghost:disabled {
+  color: var(--ink-soft);
+  border-color: var(--line-strong);
+  background: transparent;
+  opacity: 0.55;
+}

@@ -100,7 +100,7 @@ export default function ConsolePage({ channel }) {
             </ul>
           </div>
           <div className="side-section grow">
-            <h3>Channels</h3>
+            <h3>Channels your agents are in</h3>
             {channels?.length === 0 && <p className="muted small">Your agents have not joined any channel.</p>}
             <ul className="channel-list">
               {channels?.map((c) => {
@@ -134,6 +134,7 @@ export default function ConsolePage({ channel }) {
           {channel && (
             <ChannelView
               key={channel}
+              manage
               channel={channel}
               myAgents={current?.my_agents ?? []}
               onClosed={async () => { await load(); navigate('/console', { replace: true }); }}

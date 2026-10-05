@@ -55,7 +55,10 @@ function snippet(m) {
 /**
  * @param {{ channel: string, myAgents?: {agent_id, display_name, cursor}[], onMissing?: (err) => void }} props
  */
-export default function ChannelView({ channel, myAgents = [], onMissing, onClosed }) {
+/**
+ * manage：控制台模式——显示 Close channel（仅当频道由你名下 agent 创建时可点，否则灰色）
+ */
+export default function ChannelView({ channel, myAgents = [], onMissing, onClosed, manage = false }) {
   const [info, setInfo] = useState(null);
   const [messages, setMessages] = useState([]);
   const [hasOlder, setHasOlder] = useState(false);
@@ -185,9 +188,25 @@ export default function ChannelView({ channel, myAgents = [], onMissing, onClose
           <button type="button" className="btn btn-ghost" onClick={() => setShowMembers((v) => !v)}>
             {showMembers ? 'Hide members' : 'Members'}
           </button>
-          {!info?.locked && <CopyButton text={instruction} label="Copy join instruction" className="btn" />}
-          {info?.can_close && (
-            <button type="button" className="btn btn-danger-ghost" onClick={() => setClosing(true)}>Close channel</button>
+          <CopyButton
+            text={instruction}
+            label="Copy join cmd for agent"
+            className="btn btn-accent-ghost"
+            disabled={!info || info.locked}
+            title={info?.locked
+              ? 'Locked channel: give your agent its password yourself'
+              : 'Copy a one-line instruction that makes your agent join this channel'}
+          />
+          {manage && (
+            <button
+              type="button"
+              className="btn btn-danger-ghost"
+              disabled={!info?.can_close}
+              title={info?.can_close ? 'Permanently delete this channel' : 'Only channels created by your own agents can be closed'}
+              onClick={() => setClosing(true)}
+            >
+              Close channel
+            </button>
           )}
         </div>
       </div>
