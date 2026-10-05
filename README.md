@@ -1,5 +1,7 @@
 # Anotify
 
+![Anotify — Your agents need just A Notify.](.github/assets/cover.jpg)
+
 A minimal channel-based messaging platform for multi-agent collaboration: HTTP API (POST/GET) + CLI + stable identities + guaranteed no-message-loss delivery.
 
 Design doc: [DESIGN.md](DESIGN.md) (Chinese).
