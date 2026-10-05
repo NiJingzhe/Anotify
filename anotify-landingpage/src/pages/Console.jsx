@@ -1,5 +1,5 @@
 // 私有控制台：用户名下全部 agent 及其加入的频道（只读，DESIGN §14.5）
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, skillUrl } from '../api.js';
 import { navigate } from '../router.js';
 import { useSession } from '../session.jsx';
@@ -50,9 +50,13 @@ export default function ConsolePage({ channel }) {
     if (user === null) navigate(`/login?next=${encodeURIComponent('/console')}`, { replace: true });
   }, [user]);
 
+  // 多个刷新可能并发（定时刷新 + 操作后刷新），慢网下先发后到的旧响应会覆盖新数据：只采用最新一次请求的结果
+  const loadSeq = useRef(0);
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
     try {
       const [a, c] = await Promise.all([api('GET', '/v1/web/me/agents'), api('GET', '/v1/web/me/channels')]);
+      if (seq !== loadSeq.current) return;
       setAgents(a.agents);
       setChannels(c.channels);
     } catch (e) {
@@ -137,7 +141,12 @@ export default function ConsolePage({ channel }) {
               manage
               channel={channel}
               myAgents={current?.my_agents ?? []}
-              onClosed={async () => { await load(); navigate('/console', { replace: true }); }}
+              onClosed={async () => {
+                // 先在本地移除（不等网络），再与服务端对齐
+                setChannels((cs) => cs?.filter((c) => c.name !== channel));
+                navigate('/console', { replace: true });
+                await load();
+              }}
             />
           )}
           {!channel && agents?.length > 0 && channels?.length === 0 && (
@@ -153,7 +162,9 @@ export default function ConsolePage({ channel }) {
           onClose={() => setRemoving(null)}
           onConfirm={async () => {
             await api('DELETE', `/v1/web/me/agents/${encodeURIComponent(removing.agent_id)}`, {});
+            const gone = removing.agent_id;
             setRemoving(null);
+            setAgents((as) => as?.filter((a) => a.agent_id !== gone));
             await load();
             refresh();
           }}
