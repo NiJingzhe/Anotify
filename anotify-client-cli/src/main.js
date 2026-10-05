@@ -6,8 +6,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import {
-  loadCredentials, requireCredentials, saveCredentials, listProfiles, removeProfile,
-  savePendingClaim, loadPendingClaim, clearPendingClaim,
+  loadCredentials, requireCredentials, saveCredentials, listProfiles, removeProfile, profileExists,
+  migrateLegacy, savePendingClaim, loadPendingClaim, clearPendingClaim, listPendingClaims,
 } from './config.js';
 import { createWriteStream, existsSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
 import { basename } from 'node:path';
@@ -15,7 +15,7 @@ import { createHash } from 'node:crypto';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { api, apiRaw, ApiError } from './api.js';
-import { contentLines, fileMeta, humanSize } from './render.js';
+import { cli, contentLines, fileMeta, humanSize } from './render.js';
 
 const program = new Command();
 
@@ -28,7 +28,7 @@ process.stdout?.on('error', (e) => {
 program
   .name('anotify')
   .description('Anotify: channel-based messaging for agents')
-  .version('0.6.0')
+  .version('0.7.0')
   .option('--profile <name>', 'Use a saved identity profile (same as ANOTIFY_PROFILE; see anotify profile list)')
   .hook('preAction', () => {
     const { profile } = program.opts();
@@ -107,39 +107,47 @@ program
   .option('--resume', 'Keep waiting for a registration started earlier (e.g. with --no-wait)')
   .option('--force', 'Overwrite the profile even if it already holds an identity')
   .action((name, opts) => run(async () => {
-    const profileName = process.env.ANOTIFY_PROFILE;
     if (opts.resume) {
-      const pending = loadPendingClaim(profileName);
+      const pending = loadPendingClaim(resumeProfile('register'));
       if (!pending || pending.kind !== 'register') throw new Error('No pending registration for this profile. Start one with: anotify register <name> --server <url>');
       await followClaim(pending, { wait: true });
       return;
     }
     if (!name) throw new Error('Missing <name>. Usage: anotify register <name> --server <url>');
-    let existing = {};
-    try { existing = loadCredentials(); } catch { /* 新 profile 尚不存在 */ }
-    if (opts.save !== false && existing.token && !opts.force && !process.env.ANOTIFY_TOKEN) {
+    // 身份总是存进具名 profile：--profile 指定，否则与 agent 同名
+    const profileName = process.env.ANOTIFY_PROFILE ?? name;
+    if (opts.save !== false && !opts.force && profileExists(profileName)) {
       throw new Error(
-        `This profile (${profileName ?? 'default'}) already holds the identity "${existing.agent ?? existing.agent_id}". ` +
-        'Registering again would overwrite it. Use another profile (--profile <name>) or pass --force.'
+        `Profile "${profileName}" already holds an identity on this machine. ` +
+        'Registering again would overwrite it: pick another name, pass --profile <other>, or --force.'
       );
     }
     // ≤0.5 的服务端没有认领流程（/v1/info 不带 registration 字段）：退回直接注册
     const info = await api({ server: opts.server }, 'GET', '/v1/info').catch(() => null);
     if (!info?.registration || info.registration === 'open') {
       const resp = await api({ server: opts.server }, 'POST', '/v1/agents', { body: { name } });
-      finishRegistration(resp, opts.server, opts.save);
+      finishRegistration(resp, opts.server, opts.save, profileName);
       return;
     }
     const claim = await api({ server: opts.server }, 'POST', '/v1/agents/claims', { body: { name } });
-    const pending = { ...claim, server: opts.server, name, save: opts.save !== false, profile: profileName ?? null };
+    const pending = { ...claim, server: opts.server, name, save: opts.save !== false, profile: profileName };
     savePendingClaim(profileName, pending);
     printClaimInstructions(pending);
     if (opts.wait === false) {
-      console.log(`Then finish with: anotify${profileName ? ` --profile ${profileName}` : ''} register --resume`);
+      console.log(`Then finish with: anotify --profile ${profileName} register --resume`);
       return;
     }
     await followClaim(pending, { wait: true });
   }));
+
+/** --resume 用哪个 profile：显式指定的；未指定且本机只有一个待批准请求时用它 */
+function resumeProfile(kind) {
+  if (process.env.ANOTIFY_PROFILE) return process.env.ANOTIFY_PROFILE;
+  const pending = listPendingClaims();
+  if (pending.length === 1) return pending[0];
+  if (pending.length === 0) throw new Error(`No pending ${kind} request on this machine.`);
+  throw new Error(`Several pending requests (${pending.join(', ')}); pick one with: anotify --profile <name> ${kind} --resume`);
+}
 
 program
   .command('bind')
@@ -147,21 +155,21 @@ program
   .option('--no-wait', 'Print the approval link + code and exit; finish later with: anotify bind --resume')
   .option('--resume', 'Keep waiting for a bind request started earlier')
   .action((opts) => run(async () => {
-    const profileName = process.env.ANOTIFY_PROFILE;
     if (opts.resume) {
-      const pending = loadPendingClaim(profileName);
-      if (!pending || pending.kind !== 'bind') throw new Error('No pending bind request for this profile. Start one with: anotify bind');
+      const pending = loadPendingClaim(resumeProfile('bind'));
+      if (!pending || pending.kind !== 'bind') throw new Error('No pending bind request for this profile. Start one with: anotify --profile <name> bind');
       await followClaim(pending, { wait: true });
       return;
     }
     const cred = requireCredentials();
+    const profileName = cred.profile ?? 'env';
     const claim = await api(cred, 'POST', '/v1/agents/me/claims');
     const me = await api(cred, 'GET', '/v1/agents/me');
-    const pending = { ...claim, server: cred.server, name: me.display_name, profile: profileName ?? null };
+    const pending = { ...claim, server: cred.server, name: me.display_name, profile: profileName };
     savePendingClaim(profileName, pending);
     printClaimInstructions(pending);
     if (opts.wait === false) {
-      console.log(`Then finish with: anotify${profileName ? ` --profile ${profileName}` : ''} bind --resume`);
+      console.log(`Then finish with: anotify --profile ${profileName} bind --resume`);
       return;
     }
     await followClaim(pending, { wait: true });
@@ -180,7 +188,7 @@ function printClaimInstructions(p) {
 
 /** 轮询认领结果直到批准 / 过期；批准后保存凭证并清理待办文件 */
 async function followClaim(p, { wait }) {
-  hint(`Waiting for approval… (Ctrl-C is safe; continue later with: anotify${p.profile ? ` --profile ${p.profile}` : ''} ${p.kind === 'bind' ? 'bind' : 'register'} --resume)`);
+  hint(`Waiting for approval… (Ctrl-C is safe; continue later with: anotify --profile ${p.profile} ${p.kind === 'bind' ? 'bind' : 'register'} --resume)`);
   for (;;) {
     const r = await api({ server: p.server }, 'POST', `/v1/agents/claims/${p.claim_id}/poll`, {
       body: { poll_token: p.poll_token, wait: wait ? 25 : 0 },
@@ -190,13 +198,13 @@ async function followClaim(p, { wait }) {
       if (!wait) return;
       continue;
     }
-    clearPendingClaim(p.profile ?? undefined);
+    clearPendingClaim(p.profile);
     if (r.status === 'consumed' && p.kind === 'bind') {
       console.log(`✓ "${p.name}" is now bound to the approving human's account`);
       return;
     }
     if (r.status === 'consumed' && r.token) {
-      finishRegistration(r, p.server, p.save);
+      finishRegistration(r, p.server, p.save, p.profile);
       return;
     }
     if (r.status === 'consumed') throw new Error('This registration was already collected by another process; its token cannot be shown again. Start over with anotify register.');
@@ -206,19 +214,20 @@ async function followClaim(p, { wait }) {
   }
 }
 
-function finishRegistration(resp, server, save) {
+function finishRegistration(resp, server, save, profileName) {
   console.log('✓ Identity created');
   console.log(`  id   : ${resp.agent_id}  (immutable, globally unique)`);
   console.log(`  name : ${resp.display_name}  (display name; change it with anotify rename)`);
   console.log(`  token: ${resp.token}`);
   if (save === false) {
-    console.log('  (--no-save: credentials file untouched. Set ANOTIFY_SERVER / ANOTIFY_TOKEN env vars, or import it later with anotify profile add)');
-  } else {
-    const file = saveCredentials({
-      server, agent: resp.display_name, agent_id: resp.agent_id, token: resp.token,
-    }, process.env.ANOTIFY_PROFILE);
-    console.log(`  (Saved to ${file} — keep it private)`);
+    console.log('  (--no-save: nothing written. Set ANOTIFY_SERVER / ANOTIFY_TOKEN env vars, or import it later with anotify profile add)');
+    return;
   }
+  const file = saveCredentials({
+    server, agent: resp.display_name, agent_id: resp.agent_id, token: resp.token,
+  }, profileName);
+  console.log(`  (Saved to ${file} — keep it private)`);
+  console.log(`Use this identity in every command: anotify --profile ${profileName} <command>   (or export ANOTIFY_PROFILE=${profileName})`);
 }
 
 // ---------- profiles：同一台机器上的多身份 ----------
@@ -245,21 +254,49 @@ profile
   .command('list')
   .description('List local identity profiles (tokens are never printed)')
   .option('-o, --output <fmt>', 'Output format: text|json', 'text')
+  .option('--check', 'Ask each server whether every identity is still valid (deleted identities show as invalid)')
   .action((opts) => run(async () => {
-    const rows = listProfiles().map(({ profile: p, agent, agent_id, server, file }) => ({
-      profile: p, agent: agent ?? null, agent_id: agent_id || null, server, file,
+    const rows = listProfiles().map(({ profile: p, agent, agent_id, server, token, legacy }) => ({
+      profile: p, agent: agent ?? null, agent_id: agent_id || null, server, legacy: !!legacy, _token: token,
     }));
+    if (opts.check) {
+      await Promise.all(rows.map(async (r) => {
+        try {
+          const me = await api({ server: r.server, token: r._token }, 'GET', '/v1/agents/me', { timeoutMs: 15_000 });
+          r.status = me.owned === false ? 'ok (no owner)' : 'ok';
+        } catch (e) {
+          r.status = e.status === 401 ? 'INVALID (deleted or revoked)' : `unreachable (${e.code})`;
+        }
+      }));
+    }
+    for (const r of rows) delete r._token;
     if (opts.output === 'json') {
       console.log(JSON.stringify({ profiles: rows }, null, 2));
       return;
     }
     if (rows.length === 0) {
-      console.log('(No profiles. Register with anotify register, or import with anotify profile add)');
+      console.log('(No profiles. Register with anotify register <name> --server <url>, or import with anotify profile add)');
       return;
     }
     const pad = (v, n) => String(v ?? '-').padEnd(n);
-    console.log(`${pad('PROFILE', 16)}${pad('AGENT', 20)}${pad('AGENT_ID', 24)}SERVER`);
-    for (const r of rows) console.log(`${pad(r.profile, 16)}${pad(r.agent, 20)}${pad(r.agent_id, 24)}${r.server}`);
+    const w = Math.max(16, ...rows.map((r) => r.profile.length + 2));
+    console.log(`${pad('PROFILE', w)}${pad('AGENT', 20)}${pad('AGENT_ID', 24)}${opts.check ? pad('STATUS', 30) : ''}SERVER`);
+    for (const r of rows) {
+      console.log(`${pad(r.profile, w)}${pad(r.agent, 20)}${pad(r.agent_id, 24)}${opts.check ? pad(r.status, 30) : ''}${r.server}`);
+    }
+    if (rows.some((r) => r.legacy)) hint('The old credentials.toml is no longer used implicitly; turn it into a profile with: anotify profile migrate');
+    if (rows.some((r) => r.status?.startsWith('INVALID'))) hint('Remove dead identities with: anotify profile remove <name>');
+  }));
+
+profile
+  .command('migrate [name]')
+  .description('Turn the old ~/.config/anotify/credentials.toml into a named profile (default name: its agent name)')
+  .action((name) => run(async () => {
+    const r = migrateLegacy(name);
+    console.log(r.merged
+      ? `✓ Profile "${r.profile}" already had this identity; removed the old credentials.toml`
+      : `✓ Moved credentials.toml to profile "${r.profile}" (${r.file})`);
+    console.log(`Use it with: anotify --profile ${r.profile} <command>   (or export ANOTIFY_PROFILE=${r.profile})`);
   }));
 
 profile
@@ -274,19 +311,16 @@ program
   .command('whoami')
   .description('Show the active identity (authoritative — resolved by the server from your token)')
   .action(() => run(async () => {
-    const cred = loadCredentials();
-    if (!cred.server || !cred.token) {
-      console.log('Not registered. Run: anotify register <name> --server <url>');
-      return;
-    }
+    const cred = requireCredentials();
     // 权威身份来自服务端对 token 的解析，而非本地文件记录
     const me = await api(cred, 'GET', '/v1/agents/me');
+    console.log(`profile: ${cred.profile ?? '(from ANOTIFY_SERVER / ANOTIFY_TOKEN)'}`);
     console.log(`id   : ${me.agent_id}`);
     console.log(`name : ${me.display_name}`);
     console.log(`server: ${cred.server}`);
     console.log('token : ✓ valid');
     if (me.owned !== undefined) {
-      console.log(`owner : ${me.owned ? '✓ bound to a human account' : 'none (bind it with: anotify bind)'}`);
+      console.log(`owner : ${me.owned ? '✓ bound to a human account' : `none (bind it with: ${cli()} bind)`}`);
     }
     if (cred.agent && cred.agent !== me.display_name) {
       console.log(`⚠ The local credentials file records "${cred.agent}" but the server says "${me.display_name}".`);
@@ -314,7 +348,7 @@ program
     console.log(resp.joined
       ? `✓ Joined ${resp.channel}`
       : `(Already a member of ${resp.channel})`);
-    hint(`Catch up on history: anotify recv ${chName} --from-start; arm a background listener: anotify recv ${chName} --wait 60`);
+    hint(`Catch up on history: ${cli()} recv ${chName} --from-start; arm a background listener: ${cli()} recv ${chName} --wait 60`);
   }));
 
 program
@@ -349,9 +383,8 @@ channel
     const cred = requireCredentials();
     const resp = await api(cred, 'POST', '/v1/channels', { body: { name, password: opts.password } });
     console.log(`✓ Channel created: ${resp.name}${resp.locked ? ' 🔒 (locked)' : ''} (by ${resp.created_by_name})`);
-    hint(resp.locked
-      ? `Invite another agent — paste this whole line to them (replace <server-url> with your server URL): Read https://anotify.space/skill.md and join my Anotify channel ${resp.name} (password ${opts.password}, server <server-url>), say hi in-channel, then arm a background listener`
-      : `Invite another agent — paste this whole line to them (replace <server-url> with your server URL): Read https://anotify.space/skill.md and join my Anotify channel ${resp.name} (server <server-url>), say hi in-channel, then arm a background listener`);
+    const lock = resp.locked ? `password ${opts.password}, ` : '';
+    hint(`Invite another agent — paste this whole line to them: Read https://anotify.space/skill.md and join my Anotify channel ${resp.name} (${lock}server ${cred.server}), say hi in-channel, then arm a background listener`);
   }));
 
 channel
@@ -403,7 +436,7 @@ program
     if (opts.file) {
       if (opts.json) throw new Error('--file and --json cannot be used together');
       await sendFile(cred, chName, opts.file, text, opts.replyTo);
-      hint(`Arm a background listener for replies (run it in a background shell): anotify recv ${chName} --wait 60`);
+      hint(`Arm a background listener for replies (run it in a background shell): ${cli()} recv ${chName} --wait 60`);
       return;
     }
     let content = text;
@@ -421,7 +454,7 @@ program
       body: { content, content_type, reply_to: opts.replyTo },
     });
     console.log(`✓ Published to ${resp.channel}: seq=${resp.seq} sender=${resp.sender_name ?? resp.sender}`);
-    hint(`Arm a background listener for replies (run it in a background shell): anotify recv ${chName} --wait 60`);
+    hint(`Arm a background listener for replies (run it in a background shell): ${cli()} recv ${chName} --wait 60`);
   }));
 
 program
@@ -461,7 +494,7 @@ program
       return;
     }
     if (resp.cursor_initialized && opts.output !== 'json') {
-      console.log(`Note: starting from messages newer than 10 minutes. For full history: anotify recv ${chName} --from-start`);
+      console.log(`Note: starting from messages newer than 10 minutes. For full history: ${cli()} recv ${chName} --from-start`);
     }
     if (resp.messages.length > 0 && opts.ack) {
       const through = resp.messages[resp.messages.length - 1].seq;
@@ -469,7 +502,7 @@ program
         body: { through },
       });
       console.log(`ACKed through ${through} (--no-ack disables auto-consume)`);
-      hint(`After handling, re-arm your background listener: anotify recv ${chName} --wait 60`);
+      hint(`After handling, re-arm your background listener: ${cli()} recv ${chName} --wait 60`);
     }
   }));
 

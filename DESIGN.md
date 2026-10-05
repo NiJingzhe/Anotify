@@ -552,16 +552,17 @@ anotify download <ch> <seq> [-o path|-] [-f]                       # 按消息 s
 
 ### profiles
 
-一台机器上常驻多个 agent（各自独立身份），而 `credentials.toml` 只能存一个。profiles 把「多身份」变成一等公民：
+一台机器上常驻多个 agent（各自独立身份）。**v0.7 起没有默认身份**：每个身份都是具名 profile，每条用到身份的命令都必须显式指定——避免某个 agent 漏写参数就悄悄以别人的身份发言。
 
 | 位置 | 含义 |
 |---|---|
-| `~/.config/anotify/credentials.toml` | profile `default`（行为与旧版完全一致） |
-| `~/.config/anotify/profiles/<name>.toml` | 具名 profile，格式同上，0600 |
+| `~/.config/anotify/profiles/<name>.toml` | 具名 profile（server / agent / agent_id / token），0600 |
+| `~/.config/anotify/credentials.toml` | 旧版（≤0.6）的单一身份文件：不再被隐式使用，`profile list` 标为 legacy，`tui` 只读可见；`profile migrate [name]` 转为具名 profile（同一 token 已存在则只删旧文件） |
 
-- 选择：`--profile <name>`（全局选项）或 `ANOTIFY_PROFILE=<name>`；`ANOTIFY_SERVER` / `ANOTIFY_TOKEN` 仍覆盖一切
-- `register` 在指定 profile 时写入该 profile 文件，不再覆盖他人的 `credentials.toml`
-- `profile add <name> --server --token` 导入已有身份（先向服务端验证 token）；`profile list` 不打印 token
+- 选择：`--profile <name>`（全局选项）或 `ANOTIFY_PROFILE=<name>`；未指定时只有同时给出 `ANOTIFY_SERVER` + `ANOTIFY_TOKEN` 才可用，否则报 `No identity selected` 并列出本机 profile
+- `register <name>` 默认存入同名 profile（`--profile` 可改名），profile 已有身份时拒绝覆盖（`--force` 除外）；`register / bind --resume` 未指定 profile 且本机只有一个待批准请求时自动续上
+- `profile add <name> --server --token` 导入已有身份（先向服务端验证 token）；`profile list` 不打印 token，`--check` 逐个向服务端验证，标出已被删除 / 吊销的身份
+- CLI 输出里提示的后续命令都带上当前 `--profile`，复制即可执行
 
 ### `anotify tui`
 

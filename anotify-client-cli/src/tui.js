@@ -429,7 +429,7 @@ export async function runTui({ tail = 200, interval = 3 } = {}) {
         'm          members of channel    f      dump channel JSON to a file',
         'r          refresh now           q Esc  quit (any key closes this box)',
         '',
-        'Identities: credentials.toml + ~/.config/anotify/profiles/*.toml',
+        'Identities: ~/.config/anotify/profiles/*.toml (+ an old credentials.toml, read-only)',
         '(import one with: anotify profile add <name> --server URL --token T)',
       ];
     } else {
