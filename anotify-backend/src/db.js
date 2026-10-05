@@ -12,6 +12,9 @@ const CURSOR_INIT_WINDOW_SECONDS = 600;
  * 版本化迁移：按顺序执行，已执行的版本记录在 schema_migrations。
  * 只追加不修改——改表结构就加一个新版本。
  */
+/** 认领单批准后等待 CLI 领取的期限；期间名字被预留，过期后认领单作废、名字释放 */
+export const CLAIM_COLLECT_SECONDS = 24 * 60 * 60;
+
 export const MIGRATIONS = [
   // v1：与 SQLite 时代的数据模型一一对应（便于 scripts/migrate-from-sqlite.js 原样搬迁）
   `
@@ -259,12 +262,17 @@ export async function createStore(databaseUrl) {
 
   // ---- agents ----
 
-  /** display_name 是否已被（未删除的）其他 agent 占用；不区分大小写 */
+  /**
+   * display_name 是否已被占用；不区分大小写。占用者：未删除的其他 agent，或已批准、尚在领取期内
+   * 还没被 CLI 领走的 register 认领单（批准即预留名字，DESIGN §14.4）
+   */
   async function nameTaken(displayName, excludeId = null, client = pool) {
-    return !!(await one(
-      'SELECT 1 FROM agents WHERE deleted_at IS NULL AND lower(display_name) = lower($1) AND id IS DISTINCT FROM $2',
-      [displayName, excludeId], client
-    ));
+    return !!(await one(`
+      SELECT 1 FROM agents WHERE deleted_at IS NULL AND lower(display_name) = lower($1) AND id IS DISTINCT FROM $2
+      UNION ALL
+      SELECT 1 FROM agent_claims WHERE kind = 'register' AND status = 'approved' AND lower(display_name) = lower($1) AND decided_at > $3
+      LIMIT 1
+    `, [displayName, excludeId, now() - CLAIM_COLLECT_SECONDS], client));
   }
 
   /** 撞名时的建议：<name>-<4 位 base36>，返回前确认当前可用 */

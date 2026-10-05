@@ -7,6 +7,7 @@ import {
   normalizeEmail, randomCode, randomToken,
 } from './security.js';
 import { MailQuotaError, verificationEmail } from './mailer.js';
+import { CLAIM_COLLECT_SECONDS } from './db.js';
 
 const DAY = 86400;
 
@@ -317,8 +318,12 @@ export function createAccounts(store, cfg) {
     };
   }
 
-  /** 状态视图：过期在读取时惰性判定 */
-  const effectiveStatus = (c) => (c.status === 'pending' && c.expires_at <= now() ? 'expired' : c.status);
+  /** 状态视图：过期在读取时惰性判定（待批准 10 分钟；已批准待领取 24 小时） */
+  const effectiveStatus = (c) => {
+    if (c.status === 'pending' && c.expires_at <= now()) return 'expired';
+    if (c.status === 'approved' && c.decided_at + CLAIM_COLLECT_SECONDS <= now()) return 'expired'; // 批准后一直没被领取
+    return c.status;
+  };
 
   /** web 端查看认领单（不含 code）；用户需登录 */
   async function getClaimForWeb(claimId) {
@@ -375,8 +380,12 @@ export function createAccounts(store, cfg) {
       const name = claim.kind === 'bind'
         ? (await one('SELECT display_name FROM agents WHERE id = $1', [claim.agent_id], c))?.display_name
         : claim.display_name;
-      if (claim.kind !== 'bind' && await store.nameTaken(name, null, c)) {
-        throw await store.nameTakenError(name, 'someone registered it after this request was made — ask your agent to register again with another name');
+      if (claim.kind !== 'bind') {
+        // 同名认领单并发批准时串行化：先拿到锁的那个预留名字，后一个在这里看到占用
+        await c.query("SELECT pg_advisory_xact_lock(hashtext('agent-name:' || lower($1)))", [name]);
+        if (await store.nameTaken(name, null, c)) {
+          throw await store.nameTakenError(name, 'someone registered it after this request was made — ask your agent to register again with another name');
+        }
       }
       if (await store.ownerHasName(userId, name, claim.agent_id, c)) {
         throw new HttpError(409, 'name_taken_on_account', claim.kind === 'bind'
