@@ -75,6 +75,71 @@ export const MIGRATIONS = [
     PRIMARY KEY (channel, agent)
   );
   `,
+  // v2：人类用户、邮箱验证、会话、agent 认领（DESIGN §14）
+  `
+  CREATE TABLE users (
+    id                BIGINT PRIMARY KEY,
+    email             TEXT NOT NULL,
+    email_norm        TEXT NOT NULL UNIQUE,
+    password_hash     TEXT NOT NULL,
+    email_verified_at DOUBLE PRECISION,
+    invite_code       TEXT NOT NULL UNIQUE,
+    invited_by        BIGINT REFERENCES users(id),
+    created_at        DOUBLE PRECISION NOT NULL
+  );
+  CREATE INDEX idx_users_invited_by ON users(invited_by);
+
+  CREATE TABLE email_tokens (
+    token_hash TEXT PRIMARY KEY,
+    user_id    BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    purpose    TEXT NOT NULL,
+    expires_at DOUBLE PRECISION NOT NULL,
+    created_at DOUBLE PRECISION NOT NULL
+  );
+  CREATE INDEX idx_email_tokens_user ON email_tokens(user_id);
+
+  CREATE TABLE mail_log (
+    id         BIGSERIAL PRIMARY KEY,
+    recipient  TEXT NOT NULL,
+    purpose    TEXT NOT NULL,
+    ok         BOOLEAN NOT NULL,
+    error      TEXT,
+    created_at DOUBLE PRECISION NOT NULL
+  );
+  CREATE INDEX idx_mail_log_created ON mail_log(created_at);
+
+  CREATE TABLE sessions (
+    id             TEXT PRIMARY KEY,
+    user_id        BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at     DOUBLE PRECISION NOT NULL,
+    last_active_at DOUBLE PRECISION NOT NULL,
+    expires_at     DOUBLE PRECISION NOT NULL,
+    revoked_at     DOUBLE PRECISION,
+    user_agent     TEXT,
+    ip             TEXT
+  );
+  CREATE INDEX idx_sessions_user ON sessions(user_id);
+
+  ALTER TABLE agents ADD COLUMN owner_id BIGINT REFERENCES users(id);
+  CREATE INDEX idx_agents_owner ON agents(owner_id);
+
+  CREATE TABLE agent_claims (
+    id           TEXT PRIMARY KEY,
+    kind         TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    agent_id     TEXT,
+    code_hash    TEXT NOT NULL,
+    poll_hash    TEXT NOT NULL,
+    status       TEXT NOT NULL,
+    user_id      BIGINT REFERENCES users(id),
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    requester_ip TEXT,
+    created_at   DOUBLE PRECISION NOT NULL,
+    expires_at   DOUBLE PRECISION NOT NULL,
+    decided_at   DOUBLE PRECISION
+  );
+  CREATE INDEX idx_agent_claims_ip ON agent_claims(requester_ip, status);
+  `,
 ];
 
 async function migrate(pool) {
@@ -138,15 +203,16 @@ export async function createStore(databaseUrl) {
 
   // ---- agents ----
 
-  async function createAgent(displayName) {
+  /** ownerId：认领流程创建时归属的用户（DESIGN §14.4）；client：在调用方事务内执行 */
+  async function createAgent(displayName, { ownerId = null, client = pool } = {}) {
     // 注册不查重：display_name 的唯一性在频道名册范围内校验（DESIGN §3）
     const token = randomBytes(32).toString('base64url');
     for (let attempt = 0; attempt < 3; attempt++) {
       const id = 'ag_' + randomBytes(12).toString('base64url');
-      const r = await q(
-        `INSERT INTO agents (id, display_name, token_hash, created_at) VALUES ($1, $2, $3, $4)
+      const r = await client.query(
+        `INSERT INTO agents (id, display_name, token_hash, owner_id, created_at) VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT DO NOTHING`,
-        [id, displayName, sha256(token), now()]
+        [id, displayName, sha256(token), ownerId, now()]
       );
       if (r.rowCount) return { agent_id: id, display_name: displayName, token };
       // id / token 哈希极小概率撞唯一约束，换一个重试
@@ -159,7 +225,7 @@ export async function createStore(databaseUrl) {
   }
 
   async function getAgentRow(agentId) {
-    return one('SELECT id, display_name FROM agents WHERE id = $1', [agentId]);
+    return one('SELECT id, display_name, owner_id FROM agents WHERE id = $1', [agentId]);
   }
 
   /**

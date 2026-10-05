@@ -6,6 +6,10 @@ import { createStore } from './db.js';
 import { requireAuth } from './auth.js';
 import { Readable } from 'node:stream';
 import { createBlobStore, newFileId, guessMime } from './files.js';
+import { createAccounts } from './accounts.js';
+import { createMailer } from './mailer.js';
+import { accountRoutes } from './web.js';
+import { randomToken } from './security.js';
 import {
   HttpError, parseJson, parseOptionalJson, assertName, assertInt, validateMessageBody,
   assertFileName, assertCaption, FILE_CONTENT_TYPE,
@@ -27,7 +31,42 @@ const s3 = {
 const maxFileBytes = Number(process.env.ANOTIFY_MAX_FILE_BYTES ?? 25 * 1024 * 1024);
 const filesQuotaBytes = Number(process.env.ANOTIFY_FILES_QUOTA_BYTES ?? 2 * 1024 * 1024 * 1024);
 
+// 人类用户账号（DESIGN §14）
+const production = process.env.NODE_ENV === 'production';
+const webUrl = (process.env.ANOTIFY_WEB_URL ?? 'https://anotify.space').replace(/\/+$/, '');
+function secret(name, devFallback) {
+  const v = process.env[name];
+  if (v) return v;
+  if (production) {
+    console.error(`${name} must be set in production (see .env.example)`);
+    process.exit(1);
+  }
+  console.warn(`warning: ${name} not set; using an insecure development value`);
+  return devFallback;
+}
+const jwtSecret = secret('ANOTIFY_JWT_SECRET', randomToken());
+const passwordPepper = secret('ANOTIFY_PASSWORD_PEPPER', 'anotify-dev-pepper');
+const openRegistration = process.env.ANOTIFY_OPEN_REGISTRATION === '1';
+const mailer = createMailer({
+  apiKey: process.env.MAILGUN_API_KEY,
+  domain: process.env.MAILGUN_DOMAIN,
+  from: process.env.MAILGUN_FROM,
+  baseUrl: process.env.MAILGUN_BASE_URL,
+});
+const mailDailyLimit = Number(process.env.ANOTIFY_MAIL_DAILY_LIMIT ?? 100);
+
 const store = await createStore(databaseUrl);
+const accounts = createAccounts(store, {
+  pepper: passwordPepper,
+  workerId: Number(process.env.ANOTIFY_WORKER_ID ?? 0),
+  mailer,
+  mailDailyLimit,
+  webUrl,
+  maxAgentsPerUser: Number(process.env.ANOTIFY_MAX_AGENTS_PER_USER ?? 50),
+});
+const gcTimer = setInterval(() => accounts.gc().catch((e) => console.error('gc failed:', e)), 3600 * 1000);
+gcTimer.unref();
+accounts.gc().catch((e) => console.error('gc failed:', e));
 const blobs = await createBlobStore({ dir: filesDir, s3 });
 const swept = await blobs.sweep((id) => store.hasFileId(id));
 if (swept) console.log(`files: swept ${swept} orphan blob(s)`);
@@ -51,8 +90,14 @@ const v1 = new Hono();
 
 // ---------- 公开路由 ----------
 
-// POST /v1/agents —— 注册身份（§6.1）：agent_id 服务端生成且不可变
+// POST /v1/agents —— 直接注册身份（§6.1）：已改为人类认领流程（§14.4），仅在显式开放时可用
 v1.post('/agents', async (c) => {
+  if (!openRegistration) {
+    throw new HttpError(
+      410, 'registration_requires_claim',
+      'direct registration is closed: a human must approve new agents. Upgrade the CLI and run: npx -y anotify@latest register --name <name>'
+    );
+  }
   const body = await parseJson(c);
   const displayName = assertName(body?.name, 'name');
   const result = await store.createAgent(displayName);
@@ -67,6 +112,23 @@ v1.post('/agents', async (c) => {
 v1.get('/info', (c) => c.json({
   instance_id: store.instanceId,
   max_file_bytes: maxFileBytes,
+  web_url: webUrl,
+  registration: openRegistration ? 'open' : 'claim',
+}));
+
+// 账号 / 认领 / web 只读视图（§14）——须在 authed 之前挂载，避免被 bearer 中间件拦截
+v1.route('/', accountRoutes({
+  store,
+  accounts,
+  cfg: {
+    jwtSecret,
+    cookieSecure: process.env.ANOTIFY_COOKIE_SECURE !== '0',
+    allowedOrigins: [new URL(webUrl).origin, ...(process.env.ANOTIFY_EXTRA_ORIGINS ?? '').split(',').map((x) => x.trim()).filter(Boolean)],
+    trustProxy: process.env.ANOTIFY_TRUST_PROXY === '1',
+    mailDailyLimit,
+  },
+  serveFile,
+  requireAuth: requireAuth(store),
 }));
 
 // ---------- 以下路由需要认证 ----------
@@ -76,7 +138,8 @@ authed.use('*', requireAuth(store));
 
 // GET /v1/agents/me —— 当前认证身份（§6.1.1）
 authed.get('/agents/me', async (c) => {
-  return c.json({ agent_id: c.get('agentId'), display_name: c.get('agentName') });
+  const row = await store.getAgentRow(c.get('agentId'));
+  return c.json({ agent_id: row.id, display_name: row.display_name, owned: !!row.owner_id });
 });
 
 // PATCH /v1/agents/me —— 改名（§6.1.1）：只改显示视图，历史引用不受影响
@@ -287,7 +350,11 @@ authed.post('/channels/:ch/files', async (c) => {
 authed.get('/channels/:ch/files/:id', async (c) => {
   const ch = await requireChannel(c);
   await requireAccess(c, ch);
-  const id = c.req.param('id');
+  return serveFile(ch, c.req.param('id'));
+});
+
+/** 文件下载响应（agent 与 web 共用；访问门由调用方负责） */
+async function serveFile(ch, id) {
   const row = await store.getFile(ch, id);
   if (!row) throw new HttpError(404, 'file_not_found', `file "${id}" not found in channel "${ch}"`);
   const stream = await blobs.open(id);
@@ -300,9 +367,10 @@ authed.get('/channels/:ch/files/:id', async (c) => {
       'content-disposition': `attachment; filename*=UTF-8''${encoded}`,
       'x-anotify-file-name': encoded,
       'x-anotify-sha256': row.sha256,
+      'x-content-type-options': 'nosniff',
     },
   });
-});
+}
 
 // POST /v1/channels/:ch/ack —— 推进游标水位线（§6.5）
 authed.post('/channels/:ch/ack', async (c) => {
@@ -332,9 +400,10 @@ app.route('/v1', v1);
 
 // ---------- 启动 ----------
 
-const server = serve({ fetch: app.fetch, port, host }, (info) => {
+const server = serve({ fetch: app.fetch, port, hostname: host }, (info) => {
   console.log(`anotify-backend listening on http://${info.address}:${info.port}`);
   console.log(`  db: ${databaseUrl.replace(/\/\/[^@/]*@/, '//***@')}`);
+  console.log(`  mail: ${mailer.kind} (daily limit ${mailDailyLimit}); web: ${webUrl}; registration: ${openRegistration ? 'open' : 'claim'}`);
   console.log(`  files: ${blobs.kind} (max ${maxFileBytes} B/file, quota ${filesQuotaBytes} B)`);
 });
 

@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 const CONFIG_DIR = join(homedir(), '.config', 'anotify');
 const CRED_FILE = join(CONFIG_DIR, 'credentials.toml');
 const PROFILES_DIR = join(CONFIG_DIR, 'profiles');
+const PENDING_DIR = join(CONFIG_DIR, 'pending');
 
 /** profile 名与 agent 名同一规则；default 指 credentials.toml */
 const PROFILE_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -87,6 +88,31 @@ export function removeProfile(profile) {
   if (!existsSync(file)) throw new Error(`Profile "${profile}" not found`);
   rmSync(file);
   return file;
+}
+
+// ---- 待批准的认领（register / bind 的 --resume 用）----
+
+function pendingFile(profile) {
+  const name = !profile || profile === 'default' ? 'default' : profile;
+  if (!PROFILE_RE.test(name)) throw new Error(`Invalid profile name "${profile}"`);
+  return join(PENDING_DIR, `${name}.json`);
+}
+
+export function savePendingClaim(profile, claim) {
+  const file = pendingFile(profile);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify(claim, null, 2), { mode: 0o600 });
+  chmodSync(file, 0o600);
+}
+
+export function loadPendingClaim(profile) {
+  const file = pendingFile(profile);
+  if (!existsSync(file)) return null;
+  return JSON.parse(readFileSync(file, 'utf8'));
+}
+
+export function clearPendingClaim(profile) {
+  rmSync(pendingFile(profile), { force: true });
 }
 
 function tomlString(s) {
