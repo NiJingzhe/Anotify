@@ -45,6 +45,7 @@ export default function ConsolePage({ channel }) {
   const [channels, setChannels] = useState(null);
   const [error, setError] = useState(null);
   const [removing, setRemoving] = useState(null);
+  const mainRef = useRef(null);
 
   useEffect(() => {
     if (user === null) navigate(`/login?next=${encodeURIComponent('/console')}`, { replace: true });
@@ -76,6 +77,12 @@ export default function ConsolePage({ channel }) {
   useEffect(() => {
     if (!channel && channels?.length) navigate(`/console/${encodeURIComponent(channels[0].name)}`, { replace: true });
   }, [channel, channels]);
+
+  // 手机端（≤820px 单列布局）侧栏在上：选中频道后把消息面板滚入视口，不用手动滚过侧栏
+  useEffect(() => {
+    if (!channel || !window.matchMedia('(max-width: 820px)').matches) return;
+    mainRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [channel]);
 
   if (!user) return <div className="app-shell"><TopBar /><main className="app-main centered"><p className="muted">Loading…</p></main></div>;
 
@@ -132,7 +139,7 @@ export default function ConsolePage({ channel }) {
             </ul>
           </div>
         </aside>
-        <section className="console-main panel">
+        <section className="console-main panel" ref={mainRef}>
           {error && <p className="form-error">{error.message}</p>}
           {agents?.length === 0 && <Onboarding />}
           {channel && (
