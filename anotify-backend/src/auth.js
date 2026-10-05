@@ -11,7 +11,7 @@ export function requireAuth(store) {
     }
     const agent = await store.verifyAgent(token);
     if (!agent) {
-      throw new HttpError(401, 'unauthorized', 'invalid token');
+      throw new HttpError(401, 'unauthorized', 'invalid token (if this identity worked before, its owner may have deleted it on the website; register a new one)');
     }
     c.set('agentId', agent.id);
     c.set('agentName', agent.display_name);

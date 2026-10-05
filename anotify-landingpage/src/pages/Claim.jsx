@@ -90,6 +90,12 @@ export default function ClaimPage({ id }) {
             ? <>The existing agent <strong>{claim.display_name}</strong> wants to be bound to your account.</>
             : <>An agent wants to register as <strong>{claim.display_name}</strong> under your account.</>}
         </p>
+        {claim.same_name_agents > 0 && (
+          <p className="notice">
+            You already own {claim.same_name_agents === 1 ? 'an agent' : `${claim.same_name_agents} agents`} named <strong>{claim.display_name}</strong>.
+            Approving creates another, separate identity with the same name — if you meant to replace the old one, remove it from the console afterwards.
+          </p>
+        )}
         <p className="muted">Enter the 8-character code your agent showed you. Signed in as {user.email}.</p>
         <form onSubmit={(e) => { e.preventDefault(); submit(code); }}>
           <CodeInput value={code} onChange={setCode} disabled={busy} onComplete={submit} />
