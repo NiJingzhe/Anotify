@@ -169,6 +169,32 @@ export const MIGRATIONS = [
   CREATE UNIQUE INDEX idx_agents_owner_name ON agents(owner_id, display_name)
     WHERE owner_id IS NOT NULL AND deleted_at IS NULL;
   `,
+  // v6：display_name 全服唯一（不区分大小写，已删除的 agent 不占名字）（DESIGN §3）。
+  // 存量重名一次性迁移：每组保留最早注册的那个，其余改名为 <name>-<4 位>（保证不再撞名）
+  `
+  DO $$
+  DECLARE r RECORD; base TEXT; cand TEXT; n INT;
+  BEGIN
+    FOR r IN
+      SELECT id, display_name FROM (
+        SELECT id, display_name,
+               ROW_NUMBER() OVER (PARTITION BY lower(display_name) ORDER BY created_at, id) AS rn
+        FROM agents WHERE deleted_at IS NULL
+      ) d WHERE rn > 1
+    LOOP
+      base := LEFT(r.display_name, 59);
+      n := 0;
+      LOOP
+        cand := base || '-' || substr(md5(r.id || n::text), 1, 4);
+        EXIT WHEN NOT EXISTS (SELECT 1 FROM agents WHERE deleted_at IS NULL AND lower(display_name) = lower(cand));
+        n := n + 1;
+      END LOOP;
+      UPDATE agents SET display_name = cand WHERE id = r.id;
+    END LOOP;
+  END $$;
+
+  CREATE UNIQUE INDEX idx_agents_name_global ON agents (lower(display_name)) WHERE deleted_at IS NULL;
+  `,
 ];
 
 /** upTo：只迁移到指定版本（测试存量数据迁移用） */
@@ -233,9 +259,36 @@ export async function createStore(databaseUrl) {
 
   // ---- agents ----
 
+  /** display_name 是否已被（未删除的）其他 agent 占用；不区分大小写 */
+  async function nameTaken(displayName, excludeId = null, client = pool) {
+    return !!(await one(
+      'SELECT 1 FROM agents WHERE deleted_at IS NULL AND lower(display_name) = lower($1) AND id IS DISTINCT FROM $2',
+      [displayName, excludeId], client
+    ));
+  }
+
+  /** 撞名时的建议：<name>-<4 位 base36>，返回前确认当前可用 */
+  async function suggestName(displayName) {
+    const base = displayName.slice(0, 59);
+    for (let i = 0; i < 12; i++) {
+      const cand = `${base}-${randomBytes(4).readUInt32BE(0).toString(36).padStart(4, '0').slice(-4)}`;
+      if (!(await nameTaken(cand))) return cand;
+    }
+    return null;
+  }
+
+  async function nameTakenError(displayName, hint) {
+    return new HttpError(
+      409, 'name_taken',
+      `the name "${displayName}" is already taken on this server${hint ? `; ${hint}` : ''}`,
+      { suggestion: await suggestName(displayName) }
+    );
+  }
+
   /** ownerId：认领流程创建时归属的用户（DESIGN §14.4）；client：在调用方事务内执行 */
   async function createAgent(displayName, { ownerId = null, client = pool } = {}) {
     // 注册不查重：display_name 的唯一性在频道名册范围内校验（DESIGN §3）
+    if (await nameTaken(displayName, null, client)) throw await nameTakenError(displayName);
     const token = randomBytes(32).toString('base64url');
     for (let attempt = 0; attempt < 3; attempt++) {
       const id = 'ag_' + randomBytes(12).toString('base64url');
@@ -245,6 +298,7 @@ export async function createStore(databaseUrl) {
         [id, displayName, sha256(token), ownerId, now()]
       );
       if (r.rowCount) return { agent_id: id, display_name: displayName, token };
+      if (await nameTaken(displayName, null, client)) throw await nameTakenError(displayName);
       if (ownerId && await ownerHasName(ownerId, displayName, null, client)) {
         throw new HttpError(409, 'name_taken_on_account', `the account already owns an agent named "${displayName}"`);
       }
@@ -274,6 +328,7 @@ export async function createStore(databaseUrl) {
   }
 
   async function renameAgent(agentId, newDisplayName) {
+    if (await nameTaken(newDisplayName, agentId)) throw await nameTakenError(newDisplayName);
     const self = await getAgentRow(agentId);
     if (self?.owner_id && await ownerHasName(self.owner_id, newDisplayName, agentId)) {
       throw new HttpError(
@@ -295,8 +350,8 @@ export async function createStore(databaseUrl) {
         `display_name "${newDisplayName}" is already taken by a member of channel(s) [${conflicts.map((c) => c.channel).join(', ')}]; pick another name or leave the channel(s) first`
       );
     }
-    await q('UPDATE agents SET display_name = $1 WHERE id = $2', [newDisplayName, agentId]).catch((e) => {
-      if (e.code === '23505') throw new HttpError(409, 'name_taken_on_account', `your human's account already owns another agent named "${newDisplayName}"`);
+    await q('UPDATE agents SET display_name = $1 WHERE id = $2', [newDisplayName, agentId]).catch(async (e) => {
+      if (e.code === '23505') throw await nameTakenError(newDisplayName);
       throw e;
     });
     return { agent_id: agentId, display_name: newDisplayName };
@@ -677,6 +732,8 @@ export async function createStore(databaseUrl) {
     getAgentRow,
     renameAgent,
     ownerHasName,
+    nameTaken,
+    nameTakenError,
     deleteAgent,
     closeChannel,
     ensureMember,

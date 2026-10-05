@@ -90,7 +90,7 @@ const app = new Hono();
 app.use(logger());
 app.onError((err, c) => {
   if (err instanceof HttpError) {
-    return c.json({ error: { code: err.code, message: err.message } }, err.status);
+    return c.json({ error: { code: err.code, message: err.message, ...err.extra } }, err.status);
   }
   console.error(err);
   return c.json({ error: { code: 'internal', message: 'internal server error' } }, 500);

@@ -117,47 +117,28 @@ test('channels created by a deleted agent can still be closed by its former owne
   assert.equal((await del('/v1/web/channels/orphaned', owner)).status, 200);
 });
 
-test('approving a claim warns about a same-name agent already on the account', async () => {
-  const owner = await signup('dup@example.com');
-  const a = await reg('twin');
-  await bind(a, owner);
-  // 新 agent 的注册认领：开放注册的实例也接受认领流程
-  const cl = (await srv.call('POST', '/v1/agents/claims', { json: { name: 'twin' } })).body;
-  const view = await srv.call('GET', `/v1/web/claims/${cl.claim_id}`, { cookie: owner });
-  assert.equal(view.body.same_name_agents, 1);
-  const cl2 = (await srv.call('POST', '/v1/agents/claims', { json: { name: 'unique-name' } })).body;
-  assert.equal((await srv.call('GET', `/v1/web/claims/${cl2.claim_id}`, { cookie: owner })).body.same_name_agents, 0);
-});
-
-test('display names are unique per account: claim, bind and rename are all checked', async () => {
+test('global names: claims, approvals racing for a name, deleted agents free their name', async () => {
   const owner = await signup('uniq@example.com');
   const a = await reg('solo');
   await bind(a, owner);
+  // 发起认领即拦截，并给出可用建议
+  const taken = await srv.call('POST', '/v1/agents/claims', { json: { name: 'SOLO' } });
+  assert.equal(taken.body.error.code, 'name_taken');
+  const ok = await srv.call('POST', '/v1/agents/claims', { json: { name: taken.body.error.suggestion } });
+  assert.equal(ok.status, 201);
 
-  // 注册认领同名 → 409
-  const cl = (await srv.call('POST', '/v1/agents/claims', { json: { name: 'solo' } })).body;
-  const r1 = await srv.call('POST', `/v1/web/claims/${cl.claim_id}/approve`, { cookie: owner, json: { code: cl.code } });
-  assert.equal(r1.status, 409);
-  assert.equal(r1.body.error.code, 'name_taken_on_account');
-
-  // 绑定一个同名的旧 agent → 409；它改名后再绑 → 成功
-  const b = await reg('solo');
-  const cb = (await srv.call('POST', '/v1/agents/me/claims', { token: b.token })).body;
-  const r2 = await srv.call('POST', `/v1/web/claims/${cb.claim_id}/approve`, { cookie: owner, json: { code: cb.code } });
-  assert.equal(r2.body.error.code, 'name_taken_on_account');
-  assert.match(r2.body.error.message, /anotify rename/);
-  assert.equal((await srv.call('PATCH', '/v1/agents/me', { token: b.token, json: { display_name: 'solo-2' } })).status, 200);
-  await bind(b, owner);
-
-  // 名下 agent 改成兄弟的名字 → 409；不归属任何人的 agent 改成同名 → 允许
-  const r3 = await srv.call('PATCH', '/v1/agents/me', { token: b.token, json: { display_name: 'solo' } });
-  assert.equal(r3.body.error.code, 'name_taken_on_account');
-  const free = await reg('free');
-  assert.equal((await srv.call('PATCH', '/v1/agents/me', { token: free.token, json: { display_name: 'solo' } })).status, 200);
+  // 两个认领抢同一个空名字：先批准领取的赢，后批准的在批准时被拒
+  const c1 = (await srv.call('POST', '/v1/agents/claims', { json: { name: 'race-name' } })).body;
+  const c2 = (await srv.call('POST', '/v1/agents/claims', { json: { name: 'race-name' } })).body;
+  await srv.call('POST', `/v1/web/claims/${c1.claim_id}/approve`, { cookie: owner, json: { code: c1.code } });
+  assert.equal((await srv.call('POST', `/v1/agents/claims/${c1.claim_id}/poll`, { json: { poll_token: c1.poll_token } })).body.status, 'consumed');
+  const late = await srv.call('POST', `/v1/web/claims/${c2.claim_id}/approve`, { cookie: owner, json: { code: c2.code } });
+  assert.equal(late.body.error.code, 'name_taken');
+  assert.match(late.body.error.message, /register again/);
 
   // 删除后名字释放
   await del(`/v1/web/me/agents/${a.agent_id}`, owner);
-  assert.equal((await srv.call('PATCH', '/v1/agents/me', { token: b.token, json: { display_name: 'solo' } })).status, 200);
+  assert.equal((await srv.call('POST', '/v1/agents', { json: { name: 'solo' } })).status, 201);
 });
 
 test('web views show who each agent belongs to (masked for anonymous visitors)', async () => {
@@ -195,7 +176,7 @@ test('migration v5 renames pre-existing same-name agents on one account, then en
       await pool.query("INSERT INTO agents (id, display_name, token_hash, owner_id, created_at) VALUES ($1, 'qa-bot', $1, 1, $2)", [id, t]);
     }
     await pool.query("INSERT INTO agents (id, display_name, token_hash, owner_id, created_at) VALUES ('ag_other', 'qa-bot', 'o', NULL, 0)");
-    await migrate(pool, MIGRATIONS.length);
+    await migrate(pool, 5);
     const { rows } = await pool.query('SELECT id, display_name FROM agents ORDER BY created_at, id');
     assert.deepEqual(rows.map((r) => r.display_name), ['qa-bot', 'qa-bot', 'qa-bot-newAAAAA', 'qa-bot-newerBBB']);
     await assert.rejects(pool.query("UPDATE agents SET display_name = 'qa-bot' WHERE id = 'ag_newAAAAAAAA'"), /idx_agents_owner_name/);
@@ -216,4 +197,41 @@ test('responses to an identity without an owner carry x-anotify-unowned', async 
   await bind(a, owner);
   const after = await srv.call('GET', '/v1/agents/me', { token: a.token });
   assert.equal(after.headers.get('x-anotify-unowned'), null);
+});
+
+test('migration v6 makes names unique server-wide, keeping the oldest holder', async () => {
+  const pg = (await import('pg')).default;
+  const { migrate, MIGRATIONS } = await import('../src/db.js');
+  const url = new URL(srv.dbUrl);
+  url.pathname = `/anotify_mig6_${Date.now()}`;
+  const admin = new pg.Client({ connectionString: srv.dbUrl });
+  await admin.connect();
+  await admin.query(`CREATE DATABASE ${url.pathname.slice(1)}`);
+  const pool = new pg.Pool({ connectionString: url.toString() });
+  try {
+    await migrate(pool, 5);
+    await pool.query("INSERT INTO users (id, email, email_norm, password_hash, invite_code, created_at) VALUES (1, 'a@x.io', 'a@x.io', 'h', 'AAAAAAAA', 0), (2, 'b@x.io', 'b@x.io', 'h', 'BBBBBBBB', 0)");
+    const rows = [
+      ['ag_first', 'claude', 1, 1, null],
+      ['ag_second', 'Claude', 2, 2, null],      // 不同账号、大小写不同
+      ['ag_third', 'claude', null, 3, null],    // 没有主人
+      ['ag_gone', 'claude', 2, 4, 5],           // 已删除：不参与、不改名
+      ['ag_solo', 'zcode', null, 5, null],
+    ];
+    for (const [id, name, owner, t, del] of rows) {
+      await pool.query('INSERT INTO agents (id, display_name, token_hash, owner_id, created_at, deleted_at) VALUES ($1, $2, $1, $3, $4, $5)', [id, name, owner, t, del]);
+    }
+    await migrate(pool, MIGRATIONS.length);
+    const got = Object.fromEntries((await pool.query('SELECT id, display_name FROM agents')).rows.map((r) => [r.id, r.display_name]));
+    assert.equal(got.ag_first, 'claude');
+    assert.match(got.ag_second, /^Claude-[0-9a-f]{4}$/);
+    assert.match(got.ag_third, /^claude-[0-9a-f]{4}$/);
+    assert.equal(got.ag_gone, 'claude');
+    assert.equal(got.ag_solo, 'zcode');
+    await assert.rejects(pool.query("UPDATE agents SET display_name = 'CLAUDE' WHERE id = 'ag_solo'"), /idx_agents_name_global/);
+  } finally {
+    await pool.end();
+    await admin.query(`DROP DATABASE IF EXISTS ${url.pathname.slice(1)} WITH (FORCE)`);
+    await admin.end();
+  }
 });

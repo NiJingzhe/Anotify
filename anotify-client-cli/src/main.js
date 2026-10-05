@@ -11,7 +11,7 @@ import {
 } from './config.js';
 import { createWriteStream, existsSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
 import { basename } from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomInt } from 'node:crypto';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { api, apiRaw, ApiError } from './api.js';
@@ -57,7 +57,9 @@ async function run(fn) {
   try {
     await fn();
   } catch (e) {
-    if (e instanceof ApiError) {
+    if (e.reported) {
+      // 已在上下文里打印过（如撞名 + 建议）
+    } else if (e instanceof ApiError) {
       console.error(`✗ [${e.code}] ${e.message}`);
     } else {
       console.error(`✗ ${e.message}`);
@@ -127,12 +129,13 @@ program
     }
     // ≤0.5 的服务端没有认领流程（/v1/info 不带 registration 字段）：退回直接注册
     const info = await api({ server: opts.server }, 'GET', '/v1/info').catch(() => null);
+    const retry = (n) => `npx -y anotify@latest register ${n} --server ${opts.server}${opts.wait === false ? ' --no-wait' : ''}`;
     if (!info?.registration || info.registration === 'open') {
-      const resp = await api({ server: opts.server }, 'POST', '/v1/agents', { body: { name } });
+      const resp = await withNameHint(name, retry, () => api({ server: opts.server }, 'POST', '/v1/agents', { body: { name } }));
       finishRegistration(resp, opts.server, opts.save, profileName);
       return;
     }
-    const claim = await api({ server: opts.server }, 'POST', '/v1/agents/claims', { body: { name } });
+    const claim = await withNameHint(name, retry, () => api({ server: opts.server }, 'POST', '/v1/agents/claims', { body: { name } }));
     const pending = { ...claim, server: opts.server, name, save: opts.save !== false, profile: profileName };
     savePendingClaim(profileName, pending);
     printClaimInstructions(pending);
@@ -178,6 +181,26 @@ program
     }
     await followClaim(pending, { wait: true });
   }));
+
+/** 名字全服唯一：撞名时给出可直接执行的建议（优先用服务端确认可用的 suggestion） */
+function suggestName(name, details) {
+  if (details?.suggestion) return details.suggestion;
+  const tail = (Date.now() + randomInt(1_000_000)).toString(36).slice(-4);
+  return `${name.slice(0, 59)}-${tail}`;
+}
+
+async function withNameHint(name, commandFor, fn) {
+  try {
+    return await fn();
+  } catch (e) {
+    if (e instanceof ApiError && e.code === 'name_taken') {
+      console.error(`✗ [name_taken] ${e.message}`);
+      console.error(`💡 Name taken — try this: ${commandFor(suggestName(name, e.details))}`);
+      e.reported = true;
+    }
+    throw e;
+  }
+}
 
 function printClaimInstructions(p) {
   const code = `${p.code.slice(0, 4)}-${p.code.slice(4)}`;
@@ -338,7 +361,8 @@ program
   .description('Change display_name (agent_id unchanged; rejected if the name is taken by a member of any channel you are in)')
   .action((newName) => run(async () => {
     const cred = requireCredentials();
-    const resp = await api(cred, 'PATCH', '/v1/agents/me', { body: { display_name: newName } });
+    const resp = await withNameHint(newName, (n) => `npx -y anotify@latest${cred.profile ? ` --profile ${cred.profile}` : ''} rename ${n}`,
+      () => api(cred, 'PATCH', '/v1/agents/me', { body: { display_name: newName } }));
     console.log(`✓ Renamed to: ${resp.display_name} (id unchanged: ${resp.agent_id})`);
   }));
 

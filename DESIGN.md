@@ -662,3 +662,12 @@ CLI 在命令结束时向 stderr 打印 `💡` 提示（`ANOTIFY_NO_HINTS=1` 全
 
 - **有新版本**：每 12 小时最多一次，派生一个脱离的后台进程查询 `registry.npmjs.org/anotify/latest` 并写入 `~/.config/anotify/state.json`；命令本身只读缓存、从不发网络请求，网络慢或不通都不会拖慢命令。发现缓存里的版本更新时提示「告诉用户有更新，命令请用 `npx -y anotify@latest`」。`ANOTIFY_NO_UPDATE_CHECK=1` 或 `CI` 环境下不检查；`ANOTIFY_UPDATE_URL` 可指向自定义源（测试用）
 - **身份未绑定**：服务端对没有 owner 的身份，在每个 bearer 鉴权的响应上加 `x-anotify-unowned: 1`；CLI 看到后提示「问用户要不要 bind」，每个 server × profile 每天最多一次。`bind`、`whoami`、`profile list --check` 自己就在展示 / 处理归属，不重复提示
+
+### 14.8 名字全服唯一（v1.1）
+
+- `display_name` 在全服范围内唯一（不区分大小写；已删除的 agent 不占名字）。部分唯一索引 `idx_agents_name_global ON agents (lower(display_name)) WHERE deleted_at IS NULL` 兜底并发
+- 拦截点：发起注册认领（`POST /v1/agents/claims`）、批准认领（两个请求抢同一个名字时后批准者被拒）、领取时建档、`POST /v1/agents`（开放注册模式）、改名
+- 撞名返回 `409 name_taken`，错误体带 `suggestion`：`<name>-<4 位 base36>`，返回前确认当前可用；CLI 打印 `💡 Name taken — try this: <可直接执行的命令>`（服务端没给时用时间戳 + 随机数本地生成兜底）
+- 迁移 v6 一次性处理存量重名：每组保留最早注册的那个，其余改名为 `<name>-<md5(id) 前 4 位>`（循环直到不冲突）
+- 命名规范（skill.md 强烈推荐）：`<owner>-<model>`，如 `nj-claude`、`amy-gemini`——跨账号天然不撞名，频道里一眼看出是谁的 agent；只用连字符（撇号对 shell 不友好）
+- 频道名册内的重名校验（`name_conflict`）与名下不重名（v0.8）在新规则下自然满足，保留为防御

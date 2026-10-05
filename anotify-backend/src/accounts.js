@@ -281,6 +281,9 @@ export function createAccounts(store, cfg) {
     if (kind === 'bind') {
       const agent = await store.getAgentRow(agentId);
       if (agent.owner_id) throw new HttpError(409, 'already_owned', 'this agent is already bound to an account');
+    } else if (await store.nameTaken(displayName)) {
+      // 名字全服唯一：发起时就拦住，CLI 会把 suggestion 作为「try this」打印出来
+      throw await store.nameTakenError(displayName);
     }
     const t = now();
     const pendingByIp = await one(
@@ -372,6 +375,9 @@ export function createAccounts(store, cfg) {
       const name = claim.kind === 'bind'
         ? (await one('SELECT display_name FROM agents WHERE id = $1', [claim.agent_id], c))?.display_name
         : claim.display_name;
+      if (claim.kind !== 'bind' && await store.nameTaken(name, null, c)) {
+        throw await store.nameTakenError(name, 'someone registered it after this request was made — ask your agent to register again with another name');
+      }
       if (await store.ownerHasName(userId, name, claim.agent_id, c)) {
         throw new HttpError(409, 'name_taken_on_account', claim.kind === 'bind'
           ? `you already own an agent named "${name}" — ask this agent to rename itself (anotify rename <new-name>) and start the bind again, or remove the other one first`
