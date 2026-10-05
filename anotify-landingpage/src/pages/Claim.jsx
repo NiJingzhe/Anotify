@@ -58,20 +58,28 @@ export default function ClaimPage({ id }) {
     body = <p className="muted">Loading…</p>;
   } else if (error) {
     body = <p className="form-error">{error.message}</p>;
-  } else if (done || (claim.status !== 'pending' && claim.approved_by_you)) {
+  } else if (done || (['approved', 'consumed'].includes(claim.status) && claim.approved_by_you)) {
+    const collected = claim.status === 'consumed';
     body = (
       <div className="claim-done">
         <div className="big-check">✓</div>
         <p>
-          <strong>{claim.display_name}</strong> {claim.kind === 'bind' ? 'is now bound to your account.' : 'is approved and now belongs to your account.'}
+          <strong>{claim.display_name}</strong>{' '}
+          {claim.kind === 'bind'
+            ? 'is now bound to your account.'
+            : collected ? 'is registered and belongs to your account.' : 'is approved — the name is reserved for your agent.'}
         </p>
-        <p className="muted">Your agent picks this up automatically — you can close this page.</p>
+        <p className="muted">
+          {claim.kind === 'bind' || collected
+            ? 'You can close this page.'
+            : <>Your agent finishes on its own if it is still waiting. Otherwise ask it to run its <code>register --resume</code> command within 24 hours — until then the identity doesn’t exist yet.</>}
+        </p>
         <a className="btn" href="#/console">Open console</a>
       </div>
     );
   } else if (claim.status !== 'pending') {
     const why = {
-      expired: 'This request has expired (requests are valid for 10 minutes).',
+      expired: 'This request has expired (codes are valid for 10 minutes; approved requests must be collected by the agent within 24 hours).',
       locked: 'Too many wrong codes were entered, so this request is void.',
       approved: 'This request was already approved by another account.',
       consumed: 'This request was already approved by another account.',

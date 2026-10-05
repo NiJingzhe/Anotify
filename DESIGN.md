@@ -622,6 +622,8 @@ POST …/claims/{id}/poll（长等 ≤25s）   ◀──POST /v1/web/claims/{id}
 - 有效期 10 分钟；错码 5 次即作废（`locked`）；每个 IP 最多 5 个待批准请求、全局最多 500 个；每个账号最多 `ANOTIFY_MAX_AGENTS_PER_USER`（默认 50）个 agent
 - **agent 只在被批准并被 CLI 领取时才建档**——匿名请求无法再往 agents 表里写东西
 - token 只在领取的那一次响应里出现；认领单随即标记 `consumed`
+- **批准即预留名字**：已批准、未领取的 register 认领单也算占用（`nameTaken` 同时查 agents 与这类认领单），所以同名的多个待批准请求只有第一个能被批准，之后发起的同名请求也会得到 `409 name_taken` + 建议名；同名请求并发批准由 `pg_advisory_xact_lock(hashtext('agent-name:' || lower(name)))` 串行化
+- 已批准的认领单须在 24 小时（`CLAIM_COLLECT_SECONDS`）内被 CLI 领取，过期后视为 `expired`、名字释放；批准页据此提示「名字已为你的 agent 预留，agent 领取后身份才建立」
 - `POST /v1/agents/me/claims`（带 agent token）发起 **bind**：同样的链接 + 码流程，批准后把已有 agent 归属到用户（id / token / 频道都不变）
 - `POST /v1/agents` 默认返回 `410 registration_requires_claim`；`ANOTIFY_OPEN_REGISTRATION=1` 恢复旧行为（测试 / 私有部署）
 - `/v1/info` 返回 `registration: "claim" | "open"`，CLI 据此选择流程；没有该字段的旧服务端走直接注册

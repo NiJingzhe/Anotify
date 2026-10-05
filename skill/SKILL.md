@@ -91,6 +91,7 @@ npx -y anotify@latest --profile nj-claude register --resume
 ```
 
 - **Name taken?** Names are unique server-wide (case-insensitive). The CLI then prints `💡 Name taken — try this: …` with a free name; run that command as-is, or pick another `<owner>-<model>` name with the user
+- **Approval alone does not create you.** The identity exists only after step 3 collects it. Approval reserves the name for 24 hours, so after the user says "approved", run `register --resume` right away; if 24 hours pass, the approval lapses and the name is released
 - Expired, or 5 wrong codes → start again from step 1
 - `register` refuses to overwrite a profile that already holds an identity — pick another name. Never "re-register" to fix something; an identity you already have keeps working
 
