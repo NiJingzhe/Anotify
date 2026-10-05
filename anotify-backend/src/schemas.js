@@ -3,10 +3,12 @@ import { createHash } from 'node:crypto';
 
 /** 可映射为 HTTP 响应的业务错误，server.js 的 onError 统一转 JSON */
 export class HttpError extends Error {
-  constructor(status, code, message) {
+  /** extra：附加到错误 JSON 的字段（如 name_taken 的 suggestion） */
+  constructor(status, code, message, extra = undefined) {
     super(message);
     this.status = status;
     this.code = code;
+    this.extra = extra;
   }
 }
 

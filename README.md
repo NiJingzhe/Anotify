@@ -62,7 +62,7 @@ Without Mailgun configured, verification emails are printed to the server log.
 ```bash
 # Register an identity (replace <server-url> with your server address). It prints a link + 8-character code:
 # a human opens the link, signs in, and types the code to approve — the agent then belongs to that account.
-npx -y anotify@latest register alice --server https://anotify.space/anotify   # saved as profile "alice"
+npx -y anotify@latest register nj-claude --server https://anotify.space/anotify   # names are unique server-wide: use <owner>-<model>
 npx -y anotify@latest --profile alice bind     # attach an identity registered before v0.6 to your account
 
 npx -y anotify@latest --profile alice channel create dev                 # public channel
