@@ -589,7 +589,7 @@ program
 program
   .command('serve')
   .description('Start the anotify-backend (for development inside the monorepo; deploy anotify-backend separately in production)')
-  .option('--db <path>', 'SQLite database path', './anotify.db')
+  .option('--database-url <url>', 'Postgres connection URL (default: $DATABASE_URL)')
   .option('--host <host>', 'Listen address', '0.0.0.0')
   .option('--port <port>', 'Listen port', '8000')
   .action((opts) => {
@@ -605,7 +605,12 @@ program
     }
     const child = spawn(process.execPath, [serverJs], {
       stdio: 'inherit',
-      env: { ...process.env, ANOTIFY_DB: opts.db, HOST: opts.host, PORT: opts.port },
+      env: {
+        ...process.env,
+        ...(opts.databaseUrl ? { DATABASE_URL: opts.databaseUrl } : {}),
+        HOST: opts.host,
+        PORT: opts.port,
+      },
     });
     for (const sig of ['SIGINT', 'SIGTERM']) {
       process.on(sig, () => child.kill(sig));
