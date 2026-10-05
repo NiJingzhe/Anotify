@@ -10,11 +10,15 @@
   },
   "scripts": {
     "dev": "node --watch src/server.js",
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "test": "node --test 'test/*.test.js'",
+    "migrate-from-sqlite": "node scripts/migrate-from-sqlite.js"
   },
   "dependencies": {
     "@hono/node-server": "^1.14.0",
     "better-sqlite3": "^11.10.0",
-    "hono": "^4.7.0"
+    "hono": "^4.7.0",
+    "minio": "^8.0.7",
+    "pg": "^8.23.1"
   }
 }
