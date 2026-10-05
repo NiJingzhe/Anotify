@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 宣传片配乐：纯代码合成的空灵 synthwave（无采样、无版权问题）。
-// 100 BPM，A 小调，Am–F–C–G；supersaw 铺底、sidechain 脉冲贝斯、gated reverb 军鼓、闪烁琶音、带延迟与长混响的主旋律。
+// 100 BPM，A 小调，Am–F–C–G 走在低音与琶音上（不铺和弦）；sidechain 脉冲贝斯、gated reverb 军鼓、闪烁琶音，主旋律用与开头 chime 同款的铃声音色，带延迟与长混响。
 // 段落与 promo.js 的镜头切点对齐。  node promo/music.mjs → promo/out/music.wav
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -131,22 +131,15 @@ function arpNote(t0, m, g = 1, pan = 0) {
   }, { gain: 0.11 * g, pan, send: 0.8 });
 }
 
-/** 主旋律：两个失谐锯齿 + 低通 + 渐入颤音，写入 lead 总线（之后加延迟与混响） */
+/** 主旋律：与开头 chime 同一种铃声音色（正弦 + 起音处轻微 FM 亮度），自然余韵，写入 lead 总线（之后加延迟与混响） */
 function leadNote(t0, m, beats, g = 1) {
-  const len = beats * BEAT;
   const f = midi(m);
-  let p1 = 0;
-  let p2 = 0;
-  let lp = 0;
-  add(lead, t0, len + 0.25, (t) => {
-    const vib = 1 + 0.006 * Math.sin(2 * Math.PI * 5.2 * t) * Math.min(1, t / 0.35);
-    p1 += (f * vib * 1.003) / SR;
-    p2 += (f * vib * 0.997) / SR;
-    const v = ((p1 % 1) + (p2 % 1) - 1) * 0.9 + Math.sin(2 * Math.PI * f * 2 * t) * 0.12;
-    lp += 0.09 * (v - lp);
-    const env = Math.min(1, t / 0.04) * (t < len ? 1 : Math.max(0, 1 - (t - len) / 0.25));
-    return lp * env;
-  }, { gain: 0.3 * g });
+  const len = Math.max(beats * BEAT, 0.3) + 1.8; // 让余韵自然散开
+  add(lead, t0, len, (t) => {
+    const env = Math.min(1, t * 400) * Math.exp(-t * 2.0);
+    const fm = Math.sin(2 * Math.PI * f * 2 * t) * 0.9 * Math.exp(-t * 7);
+    return Math.sin(2 * Math.PI * f * t + fm) * 0.85 * env + Math.sin(2 * Math.PI * f * 3 * t) * 0.06 * Math.exp(-t * 5);
+  }, { gain: 0.24 * g });
 }
 
 function riser(t0, len, g = 1) {
@@ -196,7 +189,6 @@ const OUTRO = 55.2;  // 快闪 + slogan
 const HIT = 58.8;    // 「A Notify.」落点
 
 // intro 0–4.8 s：pad 渐起 + 大字 chime + 琶音
-pad(0, USAGE + 0.4, CHORDS[0], 0.9, 2.4);
 for (const t of [0, 1.2, 2.4, 3.0, 3.6, 4.2]) { chime(t, t < 2.4 ? 0.8 : 1); kick(t, 0.5); }
 for (let i = 0; i < 32; i++) arpNote(i * S16, CHORDS[0][i % 4] + 12, 0.6 + 0.4 * (i / 32), i % 2 ? 0.4 : -0.4);
 riser(3.6, 1.2, 0.6);
@@ -211,7 +203,6 @@ for (let t = USAGE; t < OUTRO - 1e-6; t += BEAT) {
   bassNote(t, root, 0.28, t < 9.6 ? 0.7 : 1);
   bassNote(t + BEAT / 2, root + (b === 3 ? 12 : 0), 0.26, t < 9.6 ? 0.6 : 0.85);
 }
-for (let bar = 2; bar < OUTRO / BAR - 1e-6; bar++) pad(bar * BAR, BAR + 0.1, CHORDS[bar % 4], 0.8, 0.45);
 // 16 分琶音从 9.6 s 起
 for (let t = 9.6; t < OUTRO - 1e-6; t += S16) {
   const c = CHORDS[chordAt(t)];
@@ -221,11 +212,12 @@ for (let t = 9.6; t < OUTRO - 1e-6; t += S16) {
 // 「Copy. Paste. Done.」三拍：叮 + 重音
 for (const t of [16.8, 17.4, 18.0]) { chime(t, 0.9); kick(t, 0.6); }
 // 主旋律：场景段起，每 4 小节一轮，最后一轮高八度
-for (const [start, oct] of [[SCENES, 0], [SCENES + 4 * BAR, 0], [SCENES + 8 * BAR, 0], [SCENES + 12 * BAR, 12]]) {
+for (const [start, sparkle] of [[SCENES, false], [SCENES + 4 * BAR, false], [SCENES + 8 * BAR, false], [SCENES + 12 * BAR, true]]) {
   for (const [b, m, d] of MOTIF) {
     const t0 = start + b * BEAT;
     if (t0 >= OUTRO) continue;
-    leadNote(t0, m + oct, Math.min(d, (OUTRO - t0) / BEAT));
+    leadNote(t0, m + 12, d);
+    if (sparkle) leadNote(t0, m + 24, d, 0.3);
   }
 }
 for (const c of [SCENES, 30.0, 37.2, 44.4]) riser(c - 1.2, 1.2, 0.45);
@@ -233,15 +225,13 @@ for (const c of [SCENES, 30.0, 37.2, 44.4]) riser(c - 1.2, 1.2, 0.45);
 // 55.2–57.6 s：快闪段，军鼓八分滚奏推高
 for (let t = OUTRO; t < OUTRO + BAR - 1e-6; t += BEAT) { kick(t, 1.05); bassNote(t, 45); bassNote(t + BEAT / 2, 57, 0.26, 0.8); }
 for (let t = OUTRO; t < OUTRO + BAR - 1e-6; t += BEAT / 2) snare(t, 0.55 + 0.45 * ((t - OUTRO) / BAR));
-pad(OUTRO, BAR + 0.1, CHORDS[0], 0.9, 0.2);
 // 57.6–58.8 s：抽空，只剩 pad 与上扬
-pad(OUTRO + BAR, HIT - OUTRO - BAR + 0.1, CHORDS[3], 0.8, 0.3);
 riser(OUTRO + BAR, HIT - OUTRO - BAR, 0.9);
 // 58.8 s：「A Notify.」重击 + A 大三和弦长铺底 + 旋律尾音在混响里散开
 impact(HIT);
-pad(HIT, DUR - HIT, [57, 61, 64, 69, 73], 1.1, 0.15);
-leadNote(HIT, 81, 6, 0.9);
-leadNote(HIT, 76, 6, 0.5);
+leadNote(HIT, 81, 6, 1.0);
+leadNote(HIT, 88, 6, 0.7);
+leadNote(HIT + 1.2, 76, 4, 0.5);
 for (let t = HIT + 2 * BEAT; t < DUR - 1.5; t += BEAT) { kick(t, 0.35); hat(t + BEAT / 2, 0.6); }
 for (let i = 0; i < 16; i++) arpNote(HIT + 1.2 + i * S16, [69, 73, 76, 81][i % 4] + 12, 0.6 * (1 - i / 18), i % 2 ? 0.5 : -0.5);
 
