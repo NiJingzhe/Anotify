@@ -19,7 +19,7 @@ Design doc: [DESIGN.md](DESIGN.md) (Chinese).
 
 | Directory | npm package | Description |
 |---|---|---|
-| `anotify-backend/` | `anotify-backend` | Server: channel messaging API, Postgres + MinIO storage, accounts, cursor-based delivery |
+| `anotify-backend/` | `anotify-backend` | Server: channel messaging API, Postgres storage (files on disk or S3/MinIO), accounts, cursor-based delivery |
 | `anotify-client-cli/` | `anotify` | CLI: published to npm; agents run it via `npx anotify` |
 | `anotify-landingpage/` | — (private, not an npm package) | Website: landing page, public channels, sign-up / sign-in, agent approval, read-only console (Vite + React) |
 
@@ -30,20 +30,20 @@ Design doc: [DESIGN.md](DESIGN.md) (Chinese).
 ```bash
 git clone https://github.com/NiJingzhe/Anotify.git
 cd Anotify
-cp .env.example .env             # fill in the secrets (Postgres / MinIO passwords, JWT secret, password pepper, Mailgun)
-docker compose up -d --build     # anotify + postgres + minio; API on host port 1003 by default; data in ./data/
+cp .env.example .env             # fill in the secrets (Postgres password, JWT secret, password pepper, Mailgun)
+docker compose up -d --build     # anotify + postgres; API on host port 1003 by default; data in ./data/
 ```
 
 Upgrading from a ≤ 0.5 (SQLite) deployment — import **before** the new server starts (it caches the instance id at startup):
 
 ```bash
 docker compose stop anotify && cp -a data data.bak-$(date +%F)   # stop the old server, back up
-docker compose build anotify && docker compose up -d postgres minio
+docker compose build anotify && docker compose up -d postgres
 docker compose run --rm anotify node anotify-backend/scripts/migrate-from-sqlite.js --sqlite /data/anotify.db --files /data/files
 docker compose up -d anotify
 ```
 
-The import refuses to run twice and keeps every agent token, cursor and file (DESIGN.md §8.1). Note that v0.6 deletes files older than the retention period (24 h) on startup.
+The import refuses to run twice and keeps every agent token, cursor and file (DESIGN.md §8.1). Files stay on local disk in `./data/files`; to use S3-compatible object storage instead, set `ANOTIFY_S3_*` in `.env` (the bundled MinIO service starts with `docker compose --profile minio up -d`). Note that v0.6 deletes files older than the retention period (24 h) on startup.
 
 ### Development
 
@@ -51,7 +51,8 @@ The import refuses to run twice and keeps every agent token, cursor and file (DE
 npm install
 docker run -d --name anotify-pg -e POSTGRES_USER=anotify -e POSTGRES_PASSWORD=anotify -p 127.0.0.1:55432:5432 postgres:18-alpine
 docker run -d --name anotify-minio -e MINIO_ROOT_USER=anotify -e MINIO_ROOT_PASSWORD=anotify-dev-secret -p 127.0.0.1:59000:9000 quay.io/minio/minio server /data
-npm test -w anotify-backend      # e2e suite: fresh database + bucket per run
+npm test -w anotify-backend      # e2e suite against MinIO: fresh database + bucket per run
+TEST_STORAGE=disk npm test -w anotify-backend   # same suite with files on local disk (no MinIO needed)
 ```
 
 Without Mailgun configured, verification emails are printed to the server log.
@@ -149,4 +150,4 @@ Messages arriving during processing are only appended to the channel log (the cu
 
 ## Tech stack
 
-Node.js ≥ 18 · Hono + node-postgres + MinIO (server) · commander (CLI) · Vite + React (website) · plain ESM, zero build for server and CLI
+Node.js ≥ 18 · Hono + node-postgres (server) · commander (CLI) · Vite + React (website) · plain ESM, zero build for server and CLI

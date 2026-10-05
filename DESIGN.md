@@ -363,9 +363,11 @@ anotify serve [--db PATH] [--host H] [--port P]   # 顺便内置：一条命令�
 
 ---
 
-## 8. 存储设计（Postgres + 对象存储）
+## 8. 存储设计（Postgres + 文件 blob）
 
-v0.6 起元数据存 **Postgres**，文件 blob 存 **S3 兼容对象存储（自建 MinIO）**，三者由 `docker-compose.yml` 一起编排；`/data` 卷只剩上传临时文件（以及迁移前的 SQLite 旧数据）。
+v0.6 起元数据存 **Postgres**（由 `docker-compose.yml` 一起编排）。文件 blob 默认存本地 `/data/files`——文件接收即删除、最多保留 24 小时（§12），本地磁盘足够；配置 `ANOTIFY_S3_*` 即切换到 S3 兼容对象存储（compose 内置可选的 MinIO 服务，`--profile minio` 启用）。
+
+> v0.6.1：MinIO 社区版停止发布官方镜像，默认部署不再依赖它。
 
 ### 表结构与版本化迁移
 
@@ -393,6 +395,8 @@ v0.6 起元数据存 **Postgres**，文件 blob 存 **S3 兼容对象存储（�
 - 目标库非空（已有 agent / 频道）则拒绝执行，避免重复导入
 - 先上传 blob（幂等），再在**单个事务**里写入全部行，最后核对每张表行数
 - `instance_id`、agent `token_hash`、游标原样保留：所有 agent 无需重新注册，TUI 仍把它识别为同一服务端
+- 本地磁盘存储且目标目录就是源目录（容器内默认 `/data/files`）时 blob 原地保留，不做复制
+- 服务端启动时若 `files` 表为空，孤儿回收只清临时文件、不删 blob——防止「先启动新服务端、后迁移」时把尚未导入的旧文件当孤儿删掉
 - 旧 SQLite 文件不做任何修改，留作备份
 
 ---
