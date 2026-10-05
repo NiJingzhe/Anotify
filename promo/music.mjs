@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // 宣传片配乐：纯代码合成的 synthwave（无采样、无版权问题）。
-// 按 synthwave 的典型编曲写：100 BPM，A 小调，Am–F–C–G 每和弦一小节；
-//   - 16 分音符琶音（Up：根-三-五-八度）贯穿全曲，是旋律引擎
+// 按 synthwave 的典型编曲写：100 BPM，A 自然小调，「史诗与希望」走向 VI–VII–i（F–G–Am–Am）每和弦一小节；
+//   - 主旋律：琶音式旋律——八分音符分解和弦、八度跳跃，问答句法（F、G 上行提问 → Am 下行落回主音），
+//     双锯齿失谐 + 滤波「绽放」，附点八分乒乓延迟 + 混响
+//   - 16 分音符铃声琶音（Up：根-三-五-八度）贯穿全曲，主旋律出现时让位
 //   - 四拍 808 底鼓（≈52 Hz）、2/4 拍 gated reverb 军鼓、带 swing 的 16 分踩镲 + 反拍开镲、乐句末下行 tom fill
-//   - 八分音符推进式贝斯（根音 + 偶尔跳八度），sidechain 到底鼓，带少许滑音
-//   - 主旋律：双锯齿失谐 + 滤波「绽放」，A 小调五声音阶的长音旋律，附点八分延迟 + 混响
-//   - 结构：冷开场只有琶音 → 鼓与贝斯逐层进入 → 副歌主旋律 → 间奏回到琶音 → 重建 → 高八度终副歌 → slogan 重击
+//   - chugging bass：八分音符推进，副歌起每拍根音 → 高八度跳跃，sidechain 到底鼓
+//   - 结构：冷开场只有琶音 → 鼓与贝斯逐层进入 → 副歌 → 间奏回到琶音 → 重建 → 终副歌 → F→G 推上去，重击落在 Am
 // 段落与 promo.js 的 SECTIONS 对齐。  node promo/music.mjs → promo/out/music.wav
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -148,18 +149,22 @@ function leadNote(t0, m, beats, g = 1) {
   let p3 = Math.random();
   let lp = 0;
   let lp2 = 0;
-  add(lead, t0, len + 0.35, (t) => {
-    const glide = f1 + (f0 - f1) * Math.exp(-t / 0.04);
+  const short = beats < 1; // 琶音式八分音符：更快的滑音 / 绽放、更短的尾，八度跳跃才干脆
+  const glideT = short ? 0.01 : 0.04;
+  const bloomT = short ? 0.06 : 0.18;
+  const rel = short ? 0.12 : 0.35;
+  add(lead, t0, len + rel, (t) => {
+    const glide = f1 + (f0 - f1) * Math.exp(-t / glideT);
     const vib = 1 + 0.005 * Math.sin(2 * Math.PI * 5.5 * t) * Math.min(1, Math.max(0, (t - 0.25) / 0.4));
     const chorus = 1 + 0.002 * Math.sin(2 * Math.PI * 0.7 * t);
     p1 += (glide * vib * 1.007 * chorus) / SR;
     p2 += (glide * vib * 0.993) / SR;
     p3 += (glide * vib * 0.5) / SR; // 低八度方波加厚
     const v = ((p1 % 1) * 2 - 1) * 0.5 + ((p2 % 1) * 2 - 1) * 0.5 + ((p3 % 1) < 0.5 ? 0.18 : -0.18);
-    const cutoff = 0.05 + 0.22 * Math.min(1, t / 0.18); // 滤波「绽放」
+    const cutoff = 0.05 + 0.22 * Math.min(1, t / bloomT); // 滤波「绽放」
     lp += cutoff * (v - lp);
     lp2 += cutoff * (lp - lp2);
-    const env = Math.min(1, t / 0.03) * (t < len ? 1 : Math.max(0, 1 - (t - len) / 0.35));
+    const env = Math.min(1, t / (short ? 0.006 : 0.03)) * (t < len ? 1 : Math.max(0, 1 - (t - len) / rel));
     return lp2 * env;
   }, { gain: 0.42 * g });
 }
@@ -193,23 +198,41 @@ function chime(t0, g = 1) {
 // ---------------------------------------------------------------- 和声与旋律
 
 // Am F C G，每和弦 1 小节（2.4 s）；琶音 Up 模式：根-三-五-八度，跨两个八度
-const CHORDS = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];
-const ROOTS = [45, 41, 36, 43];
-const chordAt = (t) => Math.floor(t / BAR + 1e-6) % 4;
+// 「史诗与希望」走向 VI–VII–i：F | G | Am | Am，每和弦 1 小节（2.4 s），一路向上推进、落回主音
+// 琶音 Up 模式：根-三-五-八度，跨两个八度
+const CHORDS = { F: [53, 57, 60], G: [55, 59, 62], Am: [57, 60, 64] };
+const ROOTS = { F: 41, G: 43, Am: 45 };
+const LOOP = ['F', 'G', 'Am', 'Am'];
+const OUTRO_AT = 55.2;
+const HIT_AT = 58.8;
+/** 收尾单独编排：四个词踩 F→G（各两拍）推上去，重击「A Notify.」落在 Am */
+const chordAt = (t) => {
+  if (t >= HIT_AT) return 'Am';
+  if (t >= OUTRO_AT) return t < OUTRO_AT + BEAT * 2 ? 'F' : 'G';
+  return LOOP[Math.floor(t / BAR + 1e-6) % 4];
+};
 const arpPattern = (c) => [c[0], c[1], c[2], c[0] + 12, c[1] + 12, c[2] + 12, c[0] + 24, c[2] + 12];
 
-// 主旋律（A 小调五声音阶为主，长音、好唱）：[起拍, MIDI, 拍数]，每段 4 小节 = 16 拍
+// 主旋律：琶音式旋律（八分音符分解和弦、八度跳跃）+ 问答句法——前两小节（F、G）上行提问，
+// 后两小节（Am）下行回答、落回主音 A。[起拍, MIDI, 拍数]，每段 4 小节 = 16 拍
+const eighths = (bar, notes) => notes.map((m, i) => [bar * 4 + i * 0.5, m, 0.5]);
 const PHRASE_A = [
-  [0, 69, 1.5], [1.5, 72, 0.5], [2, 76, 2],               // Am：A → C → E（上行）
-  [4, 74, 1.5], [5.5, 72, 0.5], [6, 69, 2],               // F ：D → C → A
-  [8, 67, 1], [9, 72, 1], [10, 76, 1.5], [11.5, 79, 0.5], // C ：G → C → E → G
-  [12, 76, 3], [15, 74, 1],                               // G ：长 E，D 引回
+  ...eighths(0, [69, 72, 77, 72, 69, 72, 77, 79]),  // F ：A C F C A C F G   提问 ↗
+  ...eighths(1, [71, 74, 79, 74, 71, 74, 79, 83]),  // G ：B D G D B D G B   停在导音，悬而未决
+  ...eighths(2, [84, 81, 76, 81, 79, 76, 74, 76]),  // Am：C A E A G E D E   回答 ↘
+  [12, 76, 0.5], [12.5, 74, 0.5], [13, 72, 0.5], [13.5, 71, 0.5], [14, 69, 2], // Am：E D C B → 长 A，解决
 ];
 const PHRASE_B = [
-  [0, 81, 2], [2, 79, 1], [3, 76, 1],                     // Am：高 A → G → E
-  [4, 79, 1.5], [5.5, 76, 0.5], [6, 74, 2],               // F ：G → E → D
-  [8, 76, 1.5], [9.5, 74, 0.5], [10, 72, 2],              // C ：E → D → C
-  [12, 74, 2], [14, 71, 1], [15, 74, 1],                  // G ：D → B → D（回到 A）
+  ...eighths(0, [65, 77, 72, 77, 69, 77, 72, 77]),  // F ：低音与高 F 交替的八度跳跃
+  ...eighths(1, [67, 79, 74, 79, 71, 79, 74, 81]),  // G ：同型上移，顶到高 A
+  ...eighths(2, [69, 81, 76, 81, 72, 84, 76, 84]),  // Am：冲到高 C
+  [12, 83, 0.5], [12.5, 81, 0.5], [13, 79, 0.5], [13.5, 76, 0.5], [14, 81, 2], // Am：B A G E → 长高 A
+];
+// 终副歌只有 3 小节（F G Am），回答压缩进一小节，接收尾
+const PHRASE_FINALE = [
+  ...PHRASE_B.slice(0, 16),
+  ...eighths(2, [69, 81, 76, 81]),
+  [10, 84, 0.5], [10.5, 83, 0.5], [11, 81, 1],
 ];
 function phrase(start, notes, transpose = 0, g = 1, until = Infinity) {
   for (const [b, m, d] of notes) {
@@ -229,9 +252,9 @@ const T = {
   chorus: 19.2,    // 场景①起：副歌，主旋律进入
   breakdown: 38.4, // 圆桌附近：回到只有琶音
   rebuild: 43.2,
-  finale: 48.0,    // 高八度终副歌
-  outro: 55.2,     // 快闪四个词
-  hit: 58.8,       // 「A Notify.」
+  finale: 48.0,    // 终副歌
+  outro: OUTRO_AT, // 快闪四个词
+  hit: HIT_AT,     // 「A Notify.」
 };
 
 // 琶音：从第一秒到结尾贯穿全曲
@@ -239,8 +262,9 @@ for (let t = 0; t < DUR - 2.4; t += S16) {
   const i = Math.round(t / S16);
   const ramp = t < 4.8 ? 0.6 + 0.4 * (t / 4.8) : 1;
   const inBreak = t >= T.breakdown && t < T.rebuild ? 1.15 : 1;
+  const underLead = (t >= T.chorus && t < T.breakdown) || (t >= T.finale && t < T.outro) ? 0.6 : 1; // 给琶音主旋律让位
   const fadeOut = t >= T.hit ? Math.max(0.15, 1 - (t - T.hit) / 5) : 1;
-  arpNote(t, arpPattern(CHORDS[chordAt(t)])[i % 8] + 12, ramp * inBreak * fadeOut, i % 2 ? 0.45 : -0.45);
+  arpNote(t, arpPattern(CHORDS[chordAt(t)])[i % 8] + 12, ramp * inBreak * underLead * fadeOut, i % 2 ? 0.45 : -0.45);
 }
 // 开头大字的「叮」
 for (const t of [0, 1.2, 2.4, 3.0, 3.6, 4.2]) chime(t, t < 2.4 ? 0.8 : 1);
@@ -261,30 +285,32 @@ for (let t = 0; t < T.outro - 1e-6; t += BEAT) {
     hat(t + BEAT / 2, 1, true); // 反拍开镲
   }
   if (t >= T.bass && drumsOn(t)) {
+    // chugging bass：铺垫段单音推进，副歌起每拍「根音 → 高八度」跳跃
     const root = ROOTS[chordAt(t)];
+    const jump = t >= T.chorus || b === 3 ? 12 : 0;
     bassNote(t, root, undefined, t < T.snare ? 0.8 : 1);
-    bassNote(t + BEAT / 2, root + (b === 3 ? 12 : 0), undefined, t < T.snare ? 0.7 : 0.9);
+    bassNote(t + BEAT / 2, root + jump, undefined, t < T.snare ? 0.7 : 0.9);
   }
 }
 // 乐句末 tom fill
 for (const t of [T.chorus, 28.8, T.breakdown, T.finale]) tomFill(t);
 // 「Copy. Paste. Done.」三拍：gated 军鼓重音
 for (const t of [16.8, 17.4, 18.0]) { snare(t, 1.1); chime(t, 0.6); }
-// 副歌主旋律：A 段 → B 段；间奏无旋律；终副歌 B 段高八度 + 原八度叠加
+// 副歌主旋律：A 段 → B 段；间奏无旋律；终副歌 B 段 + 低八度叠加加厚
 phrase(T.chorus, PHRASE_A);
 phrase(T.chorus + 4 * BAR, PHRASE_B, 0, 1, T.breakdown);
 riser(T.rebuild + BAR, BAR, 0.6);
-phrase(T.finale, PHRASE_B, 12, 0.8, T.outro);
-phrase(T.finale, PHRASE_B, 0, 0.55, T.outro);
+phrase(T.finale, PHRASE_FINALE, 0, 0.9, T.outro);
+phrase(T.finale, PHRASE_FINALE, -12, 0.5, T.outro);
 
 // 收尾：四个词各一拍的军鼓 + 底鼓；抽空上扬；重击后旋律尾音与开头的「叮」回呼
-for (let t = T.outro; t < T.outro + BAR - 1e-6; t += BEAT) { kick(t, 1.05); snare(t, 1.0); bassNote(t, 43); bassNote(t + BEAT / 2, 55); }
+for (let t = T.outro; t < T.outro + BAR - 1e-6; t += BEAT) { const r = ROOTS[chordAt(t)]; kick(t, 1.05); snare(t, 1.0); bassNote(t, r); bassNote(t + BEAT / 2, r + 12); }
 riser(T.outro + BAR, T.hit - T.outro - BAR, 0.9);
 impact(T.hit);
 leadNote(T.hit, 81, 4, 0.9);
 leadNote(T.hit, 76, 4, 0.45);
 chime(T.hit, 1.0);
-for (let t = T.hit + BAR; t < DUR - 2.0; t += BEAT) { kick(t, 0.35); bassNote(t, 45, undefined, 0.5); }
+for (let t = T.hit + BAR; t < DUR - 2.0; t += BEAT) { kick(t, 0.35); bassNote(t, ROOTS.Am, undefined, 0.5); }
 
 // ---------------------------------------------------------------- 效果：主旋律附点八分延迟、Schroeder 混响
 
