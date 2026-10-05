@@ -450,6 +450,10 @@ export async function createStore(databaseUrl) {
     return !!(await one('SELECT 1 FROM files WHERE id = $1 AND deleted_at IS NULL', [fileId]));
   }
 
+  async function hasAnyFileRows() {
+    return !!(await one('SELECT 1 FROM files LIMIT 1'));
+  }
+
   async function filesTotalBytes() {
     return Number((await one('SELECT COALESCE(SUM(size), 0) AS s FROM files WHERE deleted_at IS NULL')).s);
   }
@@ -597,6 +601,7 @@ export async function createStore(databaseUrl) {
     insertFile,
     getFile,
     hasFileId,
+    hasAnyFileRows,
     filesTotalBytes,
     markFileDeleted,
     confirmFileReceived,

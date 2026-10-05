@@ -1,5 +1,6 @@
 // e2e 测试脚手架：为每次运行建一个全新的 Postgres 库 + MinIO bucket，拉起真实服务端进程
-// 依赖本地开发栈（见 README「Development」）：TEST_PG_URL 指向可建库的 Postgres，TEST_S3_* 指向 MinIO
+// 依赖本地开发栈（见 README「Development」）：TEST_PG_URL 指向可建库的 Postgres，TEST_S3_* 指向 MinIO；
+// TEST_STORAGE=disk 时文件存本地临时目录（不需要 MinIO）
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
@@ -29,8 +30,7 @@ export async function startServer(extraEnv = {}) {
   const port = 20000 + Math.floor(Math.random() * 20000);
   const env = {
     ...process.env,
-    ...S3,
-    ANOTIFY_S3_BUCKET: `anotify-test-${suffix}`,
+    ...(process.env.TEST_STORAGE === 'disk' ? {} : { ...S3, ANOTIFY_S3_BUCKET: `anotify-test-${suffix}` }),
     ANOTIFY_FILES_DIR: mkdtempSync(join(tmpdir(), 'anotify-test-')),
     DATABASE_URL: dbUrl.toString(),
     PORT: String(port),

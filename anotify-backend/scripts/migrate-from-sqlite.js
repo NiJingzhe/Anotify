@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 一次性迁移：SQLite（≤0.5 服务端）→ Postgres + 对象存储（DESIGN.md §8.1）
+// 一次性迁移：SQLite（≤0.5 服务端）→ Postgres（+ 可选对象存储）（DESIGN.md §8.1）
 //
 // 用法（容器内，与服务端同一套环境变量；须在新服务端启动之前执行——服务端启动时缓存 instance_id）：
 //   docker compose run --rm anotify node anotify-backend/scripts/migrate-from-sqlite.js --sqlite /data/anotify.db --files /data/files [--dry-run]
@@ -9,10 +9,10 @@
 //   - Postgres 写入在单个事务里完成：要么全部导入，要么什么都不变
 //   - instance_id 原样保留，客户端（TUI）眼里仍是同一个服务端
 //   - agent token 哈希原样保留，所有已注册 agent 无需重新注册
-//   - 先上传 blob 再提交事务；重跑时已上传的 blob 会被覆盖，无副作用
+//   - 先上传 blob 再提交事务；重跑时已上传的 blob 会被覆盖，无副作用；本地磁盘存储且目录相同时 blob 原地保留
 import Database from 'better-sqlite3';
 import { existsSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { createStore } from '../src/db.js';
 import { createBlobStore } from '../src/files.js';
@@ -76,8 +76,9 @@ if (Number(existing) > 0) {
 }
 
 // 1) blob → 对象存储（与服务端同一配置）
+const blobDir = process.env.ANOTIFY_FILES_DIR ?? '/data/files';
 const blobs = await createBlobStore({
-  dir: process.env.ANOTIFY_FILES_DIR ?? '/data',
+  dir: blobDir,
   s3: {
     endpoint: process.env.ANOTIFY_S3_ENDPOINT,
     accessKey: process.env.ANOTIFY_S3_ACCESS_KEY,
@@ -85,14 +86,16 @@ const blobs = await createBlobStore({
     bucket: process.env.ANOTIFY_S3_BUCKET ?? 'anotify-files',
   },
 });
+// 本地磁盘存储且目标目录就是源目录（容器内默认都是 /data/files）：blob 已就位，不能把文件复制到自己身上
+const inPlace = !process.env.ANOTIFY_S3_ENDPOINT && resolve(blobDir) === resolve(args.files);
 let uploaded = 0;
 for (const f of data.files) {
   const p = join(args.files, f.id);
-  if (!existsSync(p)) continue;
+  if (!existsSync(p) || inPlace) continue;
   await blobs.put(p, f.id, { size: statSync(p).size, mime: f.mime });
   uploaded++;
 }
-log(`blobs uploaded to ${blobs.kind}: ${uploaded}`);
+log(inPlace ? `blobs already in place at ${blobDir} (local disk storage)` : `blobs copied to ${blobs.kind}: ${uploaded}`);
 
 // 2) 行数据 → Postgres（单事务）
 await store.tx(async (c) => {
