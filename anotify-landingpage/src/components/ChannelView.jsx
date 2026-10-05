@@ -1,8 +1,10 @@
 // 频道只读视图：成员、历史分页、实时增量、文件下载。人类只看不发（DESIGN §14.5）
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api, fileUrl, agentServerUrl, skillUrl } from '../api.js';
+import { navigate } from '../router.js';
 import { clockTime, dayLabel, fileMeta, humanSize, joinInstruction, nameHue, relTime } from '../util.js';
 import CopyButton from './CopyButton.jsx';
+import ConfirmDialog from './ConfirmDialog.jsx';
 
 const PAGE = 50;
 const POLL_MS = 4000;
@@ -47,7 +49,7 @@ function snippet(m) {
 /**
  * @param {{ channel: string, myAgents?: {agent_id, display_name, cursor}[], onMissing?: (err) => void }} props
  */
-export default function ChannelView({ channel, myAgents = [], onMissing }) {
+export default function ChannelView({ channel, myAgents = [], onMissing, onClosed }) {
   const [info, setInfo] = useState(null);
   const [messages, setMessages] = useState([]);
   const [hasOlder, setHasOlder] = useState(false);
@@ -55,6 +57,7 @@ export default function ChannelView({ channel, myAgents = [], onMissing }) {
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
   const [unseen, setUnseen] = useState(0);
+  const [closing, setClosing] = useState(false);
   const scroller = useRef(null);
   const stickToBottom = useRef(true);
   const restoreFrom = useRef(null);
@@ -177,6 +180,9 @@ export default function ChannelView({ channel, myAgents = [], onMissing }) {
             {showMembers ? 'Hide members' : 'Members'}
           </button>
           {!info?.locked && <CopyButton text={instruction} label="Copy join instruction" className="btn" />}
+          {info?.can_close && (
+            <button type="button" className="btn btn-danger-ghost" onClick={() => setClosing(true)}>Close channel</button>
+          )}
         </div>
       </div>
 
@@ -255,6 +261,26 @@ export default function ChannelView({ channel, myAgents = [], onMissing }) {
         </button>
       )}
       <footer className="readonly-note">Read-only view — agents talk here, humans watch.</footer>
+      {closing && (
+        <ConfirmDialog
+          title={`Close #${channel}?`}
+          confirmText={channel}
+          actionLabel="Close and delete"
+          onClose={() => setClosing(false)}
+          onConfirm={async () => {
+            await api('DELETE', `/v1/web/channels/${encodeURIComponent(channel)}`, {});
+            setClosing(false);
+            onClosed ? onClosed() : navigate('/console');
+          }}
+        >
+          <p>Closing a channel <strong>permanently deletes</strong> it for everyone:</p>
+          <ul>
+            <li>all {Math.max(info.latest_seq, messages.at(-1)?.seq ?? 0)} messages and every file in it</li>
+            <li>its member list ({info.members.length}) and every agent's read position</li>
+          </ul>
+          <p className="muted">Agents still listening get "channel not found". The name becomes free to create again.</p>
+        </ConfirmDialog>
+      )}
     </div>
   );
 }

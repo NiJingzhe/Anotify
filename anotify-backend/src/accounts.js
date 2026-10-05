@@ -247,7 +247,7 @@ export function createAccounts(store, cfg) {
       SELECT u.id, u.email, u.invite_code, u.created_at, u.email_verified_at,
              inv.email AS invited_by_email,
              (SELECT COUNT(*) FROM users x WHERE x.invited_by = u.id AND x.email_verified_at IS NOT NULL) AS invitees,
-             (SELECT COUNT(*) FROM agents a WHERE a.owner_id = u.id) AS agents
+             (SELECT COUNT(*) FROM agents a WHERE a.owner_id = u.id AND a.deleted_at IS NULL) AS agents
       FROM users u LEFT JOIN users inv ON inv.id = u.invited_by
       WHERE u.id = $1
     `, [userId]);
@@ -329,6 +329,8 @@ export function createAccounts(store, cfg) {
     return {
       claim_id: c.id,
       kind: c.kind,
+      // 由 web 路由按当前用户填充：名下已有同名 agent 时提示（agent_id 才是唯一身份，同名合法但容易混淆）
+      same_name_agents: 0,
       display_name: c.kind === 'bind' ? c.agent_name : c.display_name,
       agent_id: c.agent_id,
       status: effectiveStatus(c),
@@ -362,7 +364,7 @@ export function createAccounts(store, cfg) {
           : new HttpError(422, 'wrong_code', `wrong code (${CLAIM_MAX_ATTEMPTS - attempts} attempt(s) left)`) };
       }
 
-      const owned = Number((await one('SELECT COUNT(*) AS n FROM agents WHERE owner_id = $1', [userId], c)).n);
+      const owned = Number((await one('SELECT COUNT(*) AS n FROM agents WHERE owner_id = $1 AND deleted_at IS NULL', [userId], c)).n);
       if (owned >= cfg.maxAgentsPerUser) {
         throw new HttpError(409, 'agent_limit', `an account can own at most ${cfg.maxAgentsPerUser} agents`);
       }
@@ -424,7 +426,7 @@ export function createAccounts(store, cfg) {
     const { rows } = await pool.query(`
       SELECT a.id AS agent_id, a.display_name, a.created_at,
              (SELECT COUNT(*) FROM channel_members cm WHERE cm.agent = a.id) AS channels
-      FROM agents a WHERE a.owner_id = $1 ORDER BY a.created_at
+      FROM agents a WHERE a.owner_id = $1 AND a.deleted_at IS NULL ORDER BY a.created_at
     `, [userId]);
     return rows.map((r) => ({ ...r, channels: Number(r.channels) }));
   }
@@ -436,13 +438,14 @@ export function createAccounts(store, cfg) {
              ca.display_name AS created_by_name,
              (SELECT MAX(m.created_at) FROM messages m WHERE m.channel = c.name AND m.seq = c.last_seq) AS last_activity,
              (SELECT COUNT(*) FROM channel_members x WHERE x.channel = c.name) AS member_count,
+             EXISTS (SELECT 1 FROM agents o WHERE o.id = c.created_by AND o.owner_id = $1) AS can_close,
              a.id AS agent_id, a.display_name AS agent_name, cu.cursor
       FROM agents a
       JOIN channel_members cm ON cm.agent = a.id
       JOIN channels c ON c.name = cm.channel
       LEFT JOIN agents ca ON ca.id = c.created_by
       LEFT JOIN cursors cu ON cu.channel = c.name AND cu.agent = a.id
-      WHERE a.owner_id = $1
+      WHERE a.owner_id = $1 AND a.deleted_at IS NULL
       ORDER BY c.name, a.display_name
     `, [userId]);
     const byName = new Map();
@@ -451,7 +454,8 @@ export function createAccounts(store, cfg) {
       if (!ch) {
         ch = {
           name: r.name, locked: r.locked, created_at: r.created_at, created_by_name: r.created_by_name,
-          latest_seq: r.last_seq, last_activity: r.last_activity, member_count: Number(r.member_count), my_agents: [],
+          latest_seq: r.last_seq, last_activity: r.last_activity, member_count: Number(r.member_count),
+          can_close: r.can_close, my_agents: [],
         };
         byName.set(r.name, ch);
       }
@@ -517,6 +521,32 @@ export function createAccounts(store, cfg) {
     return rows;
   }
 
+  // ---------- 人类管理操作（DESIGN §14.6）----------
+
+  /** 用户名下（未删除）的 agent，否则 404——不区分「不存在」与「不是你的」 */
+  async function assertOwnsAgent(userId, agentId) {
+    const a = await one(
+      'SELECT id, display_name FROM agents WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL', [agentId, userId]
+    );
+    if (!a) throw new HttpError(404, 'agent_not_found', 'no such agent on your account');
+    return a;
+  }
+
+  async function countSameNameAgents(userId, displayName, excludeAgentId = null) {
+    return Number((await one(`
+      SELECT COUNT(*) AS n FROM agents
+      WHERE owner_id = $1 AND deleted_at IS NULL AND display_name = $2 AND id IS DISTINCT FROM $3
+    `, [userId, displayName, excludeAgentId])).n);
+  }
+
+  /** 能关闭频道 = 频道创建者 agent 归属于该用户（含已删除的 agent） */
+  async function canCloseChannel(userId, channel) {
+    return !!(await one(`
+      SELECT 1 FROM channels c JOIN agents o ON o.id = c.created_by
+      WHERE c.name = $1 AND o.owner_id = $2
+    `, [channel, userId]));
+  }
+
   /** 定期清理：过期认领单 / 验证 token / 会话 */
   async function gc() {
     const t = now();
@@ -533,6 +563,7 @@ export function createAccounts(store, cfg) {
     createSession, getSession, touchSession, revokeSession, getProfile, listInvitees,
     createClaim, getClaimForWeb, approveClaim, pollClaim,
     listOwnedAgents, listUserChannels, listPublicChannels, assertWebAccess, webMessages,
+    assertOwnsAgent, canCloseChannel, countSameNameAgents,
     mailsSentToday, gc,
   };
 }

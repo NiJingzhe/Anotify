@@ -145,6 +145,9 @@ v1.route('/', accountRoutes({
   },
   serveFile,
   requireAuth: requireAuth(store),
+  removeBlobs: async (ids) => {
+    for (const id of ids) await blobs.remove(id).catch((e) => console.error(`files: failed to remove ${id}:`, e.message));
+  },
 }));
 
 // ---------- 以下路由需要认证 ----------

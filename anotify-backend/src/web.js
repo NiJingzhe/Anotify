@@ -11,7 +11,7 @@ export const SESSION_COOKIE = 'anotify_session';
 /**
  * @param {object} deps { store, accounts, cfg: { jwtSecret, cookieSecure, allowedOrigins, trustProxy, mailDailyLimit }, serveFile, requireAuth }
  */
-export function accountRoutes({ store, accounts, cfg, serveFile, requireAuth }) {
+export function accountRoutes({ store, accounts, cfg, serveFile, requireAuth, removeBlobs }) {
   const r = new Hono();
 
   // ---------- 会话工具 ----------
@@ -176,6 +176,9 @@ export function accountRoutes({ store, accounts, cfg, serveFile, requireAuth }) 
     const claim = await accounts.getClaimForWeb(c.req.param('id'));
     const { _user_id, ...view } = claim;
     view.approved_by_you = _user_id ? _user_id === user.user_id : null;
+    if (view.status === 'pending') {
+      view.same_name_agents = await accounts.countSameNameAgents(user.user_id, view.display_name, view.agent_id);
+    }
     return c.json(view);
   });
 
@@ -213,7 +216,34 @@ export function accountRoutes({ store, accounts, cfg, serveFile, requireAuth }) 
       created_by: row.created_by,
       latest_seq: await store.latestSeq(ch),
       members,
+      can_close: user ? await accounts.canCloseChannel(user.user_id, ch) : false,
     });
+  });
+
+  // ---------- 人类管理操作（§14.6）：均需 cookie 会话 + 防 CSRF ----------
+
+  // 解除认领并删除 agent：token 立即失效，退出全部频道；历史消息保留
+  r.delete('/web/me/agents/:id', async (c) => {
+    assertSameSite(c);
+    const user = await requireUser(c);
+    const agent = await accounts.assertOwnsAgent(user.user_id, c.req.param('id'));
+    const result = await store.deleteAgent(agent.id);
+    await removeBlobs(result?.freed ?? []);
+    return c.json({ agent_id: agent.id, display_name: agent.display_name, deleted: true });
+  });
+
+  // 关闭频道 = 永久删除；仅当频道创建者 agent 归属于当前用户
+  r.delete('/web/channels/:ch', async (c) => {
+    assertSameSite(c);
+    const user = await requireUser(c);
+    const ch = c.req.param('ch');
+    if (!(await store.hasChannel(ch))) throw new HttpError(404, 'channel_not_found', `channel "${ch}" does not exist`);
+    if (!(await accounts.canCloseChannel(user.user_id, ch))) {
+      throw new HttpError(403, 'not_owner', 'only the owner of the agent that created this channel can close it');
+    }
+    const result = await store.closeChannel(ch);
+    await removeBlobs(result?.files ?? []);
+    return c.json({ channel: ch, closed: true });
   });
 
   r.get('/web/channels/:ch/messages', async (c) => {
