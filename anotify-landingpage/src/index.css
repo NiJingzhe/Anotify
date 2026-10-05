@@ -26,7 +26,8 @@ body,
 body {
   font-family: var(--serif);
   color: var(--ink);
-  background: #1a1023; /* shader 加载前的兜底底色 */
+  /* shader 加载前的兜底底色（与渐变主色接近，避免首帧闪黑） */
+  background: linear-gradient(135deg, #a9dcb4 0%, #f8f1cc 50%, #efb894 100%);
 }
 
 .bg-canvas {
@@ -906,3 +907,7 @@ html.overlay-open { overflow: hidden; }
 /* 亮色：CTA 玻璃更通透、边框略深，让白色流光有对比 */
 [data-theme='light'] .agents-cta { background: rgba(255, 255, 255, 0.16); border-color: rgba(26, 31, 61, 0.3); }
 [data-theme='light'] .agents-cta:hover { background: rgba(255, 255, 255, 0.36); }
+
+/* SEO 静态首屏里的说明区：只给爬虫 / 无 JS 环境，正常渲染后被 React 替换 */
+.seo-only { max-width: 720px; margin: 0 auto; padding: 3rem 1.5rem; font-family: var(--sans); line-height: 1.6; color: var(--ink); }
+.seo-only h2 { font: 700 1.8rem var(--serif); }
