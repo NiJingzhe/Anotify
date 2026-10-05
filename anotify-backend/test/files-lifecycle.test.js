@@ -4,8 +4,12 @@ import assert from 'node:assert/strict';
 import * as Minio from 'minio';
 import { startServer } from './harness.js';
 
-/** 直接查对象存储：blob 是否还在 */
+/** 直接查存储：blob 是否还在（本地磁盘或对象存储） */
 async function blobExists(env, id) {
+  if (!env.ANOTIFY_S3_ENDPOINT) {
+    const { existsSync } = await import('node:fs');
+    return existsSync(`${env.ANOTIFY_FILES_DIR}/${id}`);
+  }
   const u = new URL(env.ANOTIFY_S3_ENDPOINT);
   const mc = new Minio.Client({ endPoint: u.hostname, port: Number(u.port), useSSL: false, accessKey: env.ANOTIFY_S3_ACCESS_KEY, secretKey: env.ANOTIFY_S3_SECRET_KEY });
   try {

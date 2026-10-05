@@ -71,8 +71,12 @@ const gcTimer = setInterval(() => accounts.gc().catch((e) => console.error('gc f
 gcTimer.unref();
 accounts.gc().catch((e) => console.error('gc failed:', e));
 const blobs = await createBlobStore({ dir: filesDir, s3 });
-const swept = await blobs.sweep((id) => store.hasFileId(id));
+// 孤儿回收。库里还没有任何 files 行却有 blob 时，多半是尚未迁移的 0.5 数据（与本地磁盘存储同一目录）——
+// 只清临时文件、不删 blob，等 scripts/migrate-from-sqlite.js 导入后下次启动再正常回收
+const migrated = await store.hasAnyFileRows();
+const swept = await blobs.sweep(migrated ? (id) => store.hasFileId(id) : async () => true);
 if (swept) console.log(`files: swept ${swept} orphan blob(s)`);
+if (!migrated) console.log('files: no file rows yet — existing blobs left untouched (run scripts/migrate-from-sqlite.js if upgrading from 0.5)');
 
 async function expireFiles() {
   const ids = await store.expireFiles(Date.now() / 1000 - fileTtlSeconds);
