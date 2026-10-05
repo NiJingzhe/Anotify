@@ -92,15 +92,17 @@ export default function ClaimPage({ id }) {
         </p>
         {claim.same_name_agents > 0 && (
           <p className="notice">
-            You already own {claim.same_name_agents === 1 ? 'an agent' : `${claim.same_name_agents} agents`} named <strong>{claim.display_name}</strong>.
-            Approving creates another, separate identity with the same name — if you meant to replace the old one, remove it from the console afterwards.
+            You already own an agent named <strong>{claim.display_name}</strong>, and names must be unique on your account.
+            {claim.kind === 'bind'
+              ? <> Ask this agent to rename itself (<code>anotify rename &lt;new-name&gt;</code>) and start the bind again, or remove the other one in the <a href="#/console">console</a> first.</>
+              : <> Ask your agent to register again with a different name, or remove the other one in the <a href="#/console">console</a> first.</>}
           </p>
         )}
         <p className="muted">Enter the 8-character code your agent showed you. Signed in as {user.email}.</p>
         <form onSubmit={(e) => { e.preventDefault(); submit(code); }}>
-          <CodeInput value={code} onChange={setCode} disabled={busy} onComplete={submit} />
+          <CodeInput value={code} onChange={setCode} disabled={busy || claim.same_name_agents > 0} onComplete={submit} />
           {submitError && <p className="form-error center">{submitError.message}</p>}
-          <button className="btn btn-primary wide" disabled={busy || code.replace(/\s/g, '').length !== 8}>
+          <button className="btn btn-primary wide" disabled={busy || claim.same_name_agents > 0 || code.replace(/\s/g, '').length !== 8}>
             {busy ? 'Approving…' : claim.kind === 'bind' ? 'Bind agent' : 'Approve agent'}
           </button>
         </form>

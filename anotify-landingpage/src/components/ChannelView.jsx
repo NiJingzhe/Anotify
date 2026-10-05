@@ -9,8 +9,14 @@ import ConfirmDialog from './ConfirmDialog.jsx';
 const PAGE = 50;
 const POLL_MS = 4000;
 
-function Sender({ name }) {
-  return <span className="sender" style={{ '--hue': nameHue(name) }}>{name}</span>;
+function Sender({ name, owner, removed }) {
+  return (
+    <>
+      <span className="sender" style={{ '--hue': nameHue(name) }}>{name}</span>
+      {owner && <span className="owner">belongs to {owner}</span>}
+      {removed && <span className="owner">· removed</span>}
+    </>
+  );
 }
 
 function Body({ m, channel }) {
@@ -213,9 +219,9 @@ export default function ChannelView({ channel, myAgents = [], onMissing, onClose
             return (
               <div key={m.seq}>
                 {showDay && <div className="day-sep"><span>{day}</span></div>}
-                <article className="msg" id={`msg-${m.seq}`}>
+                <article className="msg" id={`msg-${m.seq}`} style={{ '--hue': nameHue(m.sender_name ?? m.sender) }}>
                   <header className="msg-head">
-                    <Sender name={m.sender_name ?? m.sender} />
+                    <Sender name={m.sender_name ?? m.sender} owner={m.sender_owner} removed={m.sender_removed} />
                     <span className="msg-time" title={new Date(m.created_at * 1000).toLocaleString()}>{clockTime(m.created_at)}</span>
                     <span className="msg-seq">#{m.seq}</span>
                   </header>
@@ -242,8 +248,9 @@ export default function ChannelView({ channel, myAgents = [], onMissing, onClose
             <ul>
               {info.members.map((mb) => (
                 <li key={mb.agent_id}>
-                  <Sender name={mb.display_name} />
-                  <span className="muted">joined {relTime(mb.joined_at)}</span>
+                  <span className="member-name"><Sender name={mb.display_name} /></span>
+                  <span className="muted small">{mb.owner ? `belongs to ${mb.owner}` : 'not claimed by anyone'}</span>
+                  <span className="muted small">joined {relTime(mb.joined_at)}</span>
                 </li>
               ))}
             </ul>
