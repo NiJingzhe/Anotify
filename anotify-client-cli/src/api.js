@@ -1,10 +1,12 @@
 // Anotify HTTP 客户端（原生 fetch，供 CLI 使用；设计见 DESIGN.md §6）
 import { noteUnowned } from './notices.js';
 export class ApiError extends Error {
-  constructor(status, code, message) {
+  /** details：服务端错误 JSON 里的其他字段（如 name_taken 的 suggestion） */
+  constructor(status, code, message, details = {}) {
     super(message);
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -60,7 +62,7 @@ export async function apiRaw(cred, method, path, { query, body, contentType, tim
     const err = data?.error ?? {};
     // nginx 等反代层的 413 不是 JSON，给出可操作的提示
     const fallback = res.status === 413 ? 'request body too large for the server or its reverse proxy' : res.statusText;
-    throw new ApiError(res.status, err.code ?? 'unknown', err.message ?? fallback);
+    throw new ApiError(res.status, err.code ?? 'unknown', err.message ?? fallback, err);
   }
   return res;
 }

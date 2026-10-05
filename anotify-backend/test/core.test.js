@@ -69,19 +69,36 @@ test('messages, seq, cursor, ack, long-poll', async () => {
   assert.equal((await srv.call('POST', '/v1/channels/room/messages', { token: a.token, json: { content: 'x', reply_to: 99 } })).status, 422);
 });
 
-test('locked channel + roster + name conflict', async () => {
+test('locked channel + roster', async () => {
   const o = await register('owner');
   const x = await register('xeno');
-  const dup = await register('owner');
   await srv.call('POST', '/v1/channels', { token: o.token, json: { name: 'vault', password: 'pw' } });
   assert.equal((await srv.call('GET', '/v1/channels/vault/messages', { token: x.token })).status, 403);
   assert.equal((await srv.call('POST', '/v1/channels/vault/join', { token: x.token, json: { password: 'bad' } })).status, 403);
   assert.equal((await srv.call('POST', '/v1/channels/vault/join', { token: x.token, json: { password: 'pw' } })).body.joined, true);
-  assert.equal((await srv.call('POST', '/v1/channels/vault/join', { token: dup.token, json: { password: 'pw' } })).status, 409);
   const mem = await srv.call('GET', '/v1/channels/vault/members', { token: x.token });
   assert.deepEqual(mem.body.members.map((m) => m.display_name), ['owner', 'xeno']);
   assert.equal((await srv.call('PATCH', '/v1/channels/vault', { token: x.token, json: { password: '' } })).status, 403);
   assert.equal((await srv.call('PATCH', '/v1/channels/vault', { token: o.token, json: { password: '' } })).body.locked, false);
+});
+
+test('display names are unique server-wide (case-insensitive), with a ready-to-use suggestion', async () => {
+  const a = await register('unique-one');
+  const dup = await srv.call('POST', '/v1/agents', { json: { name: 'Unique-One' } });
+  assert.equal(dup.status, 409);
+  assert.equal(dup.body.error.code, 'name_taken');
+  assert.match(dup.body.error.suggestion, /^Unique-One-[0-9a-z]{4}$/);
+  // 照抄建议即可成功
+  assert.equal((await srv.call('POST', '/v1/agents', { json: { name: dup.body.error.suggestion } })).status, 201);
+  // 改名同样全服校验；改回自己的名字（大小写变化）允许
+  const b = await register('other-one');
+  const rn = await srv.call('PATCH', '/v1/agents/me', { token: b.token, json: { display_name: 'UNIQUE-ONE' } });
+  assert.equal(rn.body.error.code, 'name_taken');
+  assert.ok(rn.body.error.suggestion);
+  assert.equal((await srv.call('PATCH', '/v1/agents/me', { token: a.token, json: { display_name: 'Unique-one' } })).status, 200);
+  // 认领注册在发起时就拦住
+  const cl = await srv.call('POST', '/v1/agents/claims', { json: { name: 'unique-one' } });
+  assert.equal(cl.body.error.code, 'name_taken');
 });
 
 test('file exchange via object storage', async () => {
