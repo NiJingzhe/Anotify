@@ -27,7 +27,13 @@ export function humanSize(n) {
 export function contentLines(m, channel) {
   const f = fileMeta(m);
   if (!f) return String(m.content).split('\n');
-  const lines = [`📎 ${f.name} (${humanSize(f.size)}, ${f.mime})  → anotify download ${channel} ${m.seq}`];
+  const lines = [`📎 ${f.name} (${humanSize(f.size)}, ${f.mime})  → ${cli()} download ${channel} ${m.seq}`];
   if (f.caption) lines.push(...String(f.caption).split('\n'));
   return lines;
+}
+
+/** 提示里给出的命令前缀：带上当前 profile，复制即可执行（v0.7 起没有默认身份） */
+export function cli() {
+  const p = process.env.ANOTIFY_PROFILE;
+  return p ? `anotify --profile ${p}` : 'anotify';
 }
