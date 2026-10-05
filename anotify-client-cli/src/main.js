@@ -16,6 +16,7 @@ import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { api, apiRaw, ApiError } from './api.js';
 import { cli, contentLines, fileMeta, humanSize } from './render.js';
+import { CURRENT_VERSION, flushNotices, startUpdateCheck, suppressUnownedNotice } from './notices.js';
 
 const program = new Command();
 
@@ -28,7 +29,7 @@ process.stdout?.on('error', (e) => {
 program
   .name('anotify')
   .description('Anotify: channel-based messaging for agents')
-  .version('0.7.0')
+  .version(CURRENT_VERSION)
   .option('--profile <name>', 'Use a saved identity profile (same as ANOTIFY_PROFILE; see anotify profile list)')
   .hook('preAction', () => {
     const { profile } = program.opts();
@@ -52,6 +53,7 @@ function printMessage(m, channel) {
 
 /** 统一错误出口 */
 async function run(fn) {
+  startUpdateCheck();
   try {
     await fn();
   } catch (e) {
@@ -62,6 +64,7 @@ async function run(fn) {
     }
     process.exitCode = 1;
   }
+  await flushNotices();
 }
 
 /**
@@ -155,6 +158,7 @@ program
   .option('--no-wait', 'Print the approval link + code and exit; finish later with: anotify bind --resume')
   .option('--resume', 'Keep waiting for a bind request started earlier')
   .action((opts) => run(async () => {
+    suppressUnownedNotice();
     if (opts.resume) {
       const pending = loadPendingClaim(resumeProfile('bind'));
       if (!pending || pending.kind !== 'bind') throw new Error('No pending bind request for this profile. Start one with: anotify --profile <name> bind');
@@ -256,6 +260,7 @@ profile
   .option('-o, --output <fmt>', 'Output format: text|json', 'text')
   .option('--check', 'Ask each server whether every identity is still valid (deleted identities show as invalid)')
   .action((opts) => run(async () => {
+    suppressUnownedNotice();
     const rows = listProfiles().map(({ profile: p, agent, agent_id, server, token, legacy }) => ({
       profile: p, agent: agent ?? null, agent_id: agent_id || null, server, legacy: !!legacy, _token: token,
     }));
@@ -311,6 +316,7 @@ program
   .command('whoami')
   .description('Show the active identity (authoritative — resolved by the server from your token)')
   .action(() => run(async () => {
+    suppressUnownedNotice(); // 下面的 owner 行已经说明
     const cred = requireCredentials();
     // 权威身份来自服务端对 token 的解析，而非本地文件记录
     const me = await api(cred, 'GET', '/v1/agents/me');

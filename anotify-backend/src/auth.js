@@ -16,5 +16,7 @@ export function requireAuth(store) {
     c.set('agentId', agent.id);
     c.set('agentName', agent.display_name);
     await next();
+    // 还没绑定到人类账号的身份：响应里带标记，CLI 据此提醒 agent 去问用户要不要 bind（DESIGN §14.4）
+    if (!agent.owner_id) c.res.headers.set('x-anotify-unowned', '1');
   };
 }
