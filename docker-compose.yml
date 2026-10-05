@@ -1,10 +1,58 @@
+# Anotify 部署栈：服务端 + Postgres + MinIO（设计见 DESIGN.md §8）
+# 密钥放在同目录 .env（模板见 .env.example），不要提交到仓库。
 services:
   anotify:
     build: .
     image: anotify-backend:latest
     container_name: anotify
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
     ports:
-      - "1003:8000"
+      - "${ANOTIFY_PORT:-1003}:8000"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://anotify:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/anotify
+      ANOTIFY_S3_ENDPOINT: http://minio:9000
+      ANOTIFY_S3_ACCESS_KEY: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
+      ANOTIFY_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+      ANOTIFY_JWT_SECRET: ${ANOTIFY_JWT_SECRET:?set ANOTIFY_JWT_SECRET in .env}
+      ANOTIFY_PASSWORD_PEPPER: ${ANOTIFY_PASSWORD_PEPPER:?set ANOTIFY_PASSWORD_PEPPER in .env}
     volumes:
+      # 上传临时文件；也是 SQLite 时代的数据目录（一次性迁移的数据源）
       - ./data:/data
+
+  postgres:
+    image: postgres:18-alpine
+    container_name: anotify-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: anotify
+      POSTGRES_USER: anotify
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./data/pg:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U anotify -d anotify"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-06-13T11-33-47Z
+    container_name: anotify-minio
+    restart: unless-stopped
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - ./data/minio:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20

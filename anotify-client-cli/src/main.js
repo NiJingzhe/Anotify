@@ -5,7 +5,10 @@ import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { loadCredentials, requireCredentials, saveCredentials, listProfiles, removeProfile } from './config.js';
+import {
+  loadCredentials, requireCredentials, saveCredentials, listProfiles, removeProfile,
+  savePendingClaim, loadPendingClaim, clearPendingClaim,
+} from './config.js';
 import { createWriteStream, existsSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
 import { basename } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -25,7 +28,7 @@ process.stdout?.on('error', (e) => {
 program
   .name('anotify')
   .description('Anotify: channel-based messaging for agents')
-  .version('0.5.0')
+  .version('0.6.0')
   .option('--profile <name>', 'Use a saved identity profile (same as ANOTIFY_PROFILE; see anotify profile list)')
   .hook('preAction', () => {
     const { profile } = program.opts();
@@ -96,27 +99,127 @@ function readStdin() {
 // ---------- 身份 ----------
 
 program
-  .command('register <name>')
-  .description('Register an agent identity and save credentials (token shown only once)')
+  .command('register [name]')
+  .description('Register an agent identity; a human approves it in the browser with a one-time code (token shown only once)')
   .requiredOption('--server <url>', 'Server URL', process.env.ANOTIFY_SERVER ?? 'http://localhost:8000')
   .option('--no-save', "Don't write the credentials file (for multi-agent testing; pair with the ANOTIFY_TOKEN env var)")
+  .option('--no-wait', 'Print the approval link + code and exit; finish later with: anotify register --resume')
+  .option('--resume', 'Keep waiting for a registration started earlier (e.g. with --no-wait)')
+  .option('--force', 'Overwrite the profile even if it already holds an identity')
   .action((name, opts) => run(async () => {
-    const resp = await api({ server: opts.server }, 'POST', '/v1/agents', {
-      body: { name },
-    });
-    console.log('✓ Identity created');
-    console.log(`  id   : ${resp.agent_id}  (immutable, globally unique)`);
-    console.log(`  name : ${resp.display_name}  (display name; change it with anotify rename)`);
-    console.log(`  token: ${resp.token}`);
-    if (opts.save === false) {
-      console.log('  (--no-save: credentials file untouched. Set ANOTIFY_SERVER / ANOTIFY_TOKEN env vars, or import it later with anotify profile add)');
-    } else {
-      const file = saveCredentials({
-        server: opts.server, agent: resp.display_name, agent_id: resp.agent_id, token: resp.token,
-      }, process.env.ANOTIFY_PROFILE);
-      console.log(`  (Saved to ${file} — keep it private)`);
+    const profileName = process.env.ANOTIFY_PROFILE;
+    if (opts.resume) {
+      const pending = loadPendingClaim(profileName);
+      if (!pending || pending.kind !== 'register') throw new Error('No pending registration for this profile. Start one with: anotify register <name> --server <url>');
+      await followClaim(pending, { wait: true });
+      return;
     }
+    if (!name) throw new Error('Missing <name>. Usage: anotify register <name> --server <url>');
+    let existing = {};
+    try { existing = loadCredentials(); } catch { /* 新 profile 尚不存在 */ }
+    if (opts.save !== false && existing.token && !opts.force && !process.env.ANOTIFY_TOKEN) {
+      throw new Error(
+        `This profile (${profileName ?? 'default'}) already holds the identity "${existing.agent ?? existing.agent_id}". ` +
+        'Registering again would overwrite it. Use another profile (--profile <name>) or pass --force.'
+      );
+    }
+    // ≤0.5 的服务端没有认领流程（/v1/info 不带 registration 字段）：退回直接注册
+    const info = await api({ server: opts.server }, 'GET', '/v1/info').catch(() => null);
+    if (!info?.registration || info.registration === 'open') {
+      const resp = await api({ server: opts.server }, 'POST', '/v1/agents', { body: { name } });
+      finishRegistration(resp, opts.server, opts.save);
+      return;
+    }
+    const claim = await api({ server: opts.server }, 'POST', '/v1/agents/claims', { body: { name } });
+    const pending = { ...claim, server: opts.server, name, save: opts.save !== false, profile: profileName ?? null };
+    savePendingClaim(profileName, pending);
+    printClaimInstructions(pending);
+    if (opts.wait === false) {
+      console.log(`Then finish with: anotify${profileName ? ` --profile ${profileName}` : ''} register --resume`);
+      return;
+    }
+    await followClaim(pending, { wait: true });
   }));
+
+program
+  .command('bind')
+  .description('Bind this existing identity to a human account (a human approves it in the browser with a one-time code)')
+  .option('--no-wait', 'Print the approval link + code and exit; finish later with: anotify bind --resume')
+  .option('--resume', 'Keep waiting for a bind request started earlier')
+  .action((opts) => run(async () => {
+    const profileName = process.env.ANOTIFY_PROFILE;
+    if (opts.resume) {
+      const pending = loadPendingClaim(profileName);
+      if (!pending || pending.kind !== 'bind') throw new Error('No pending bind request for this profile. Start one with: anotify bind');
+      await followClaim(pending, { wait: true });
+      return;
+    }
+    const cred = requireCredentials();
+    const claim = await api(cred, 'POST', '/v1/agents/me/claims');
+    const me = await api(cred, 'GET', '/v1/agents/me');
+    const pending = { ...claim, server: cred.server, name: me.display_name, profile: profileName ?? null };
+    savePendingClaim(profileName, pending);
+    printClaimInstructions(pending);
+    if (opts.wait === false) {
+      console.log(`Then finish with: anotify${profileName ? ` --profile ${profileName}` : ''} bind --resume`);
+      return;
+    }
+    await followClaim(pending, { wait: true });
+  }));
+
+function printClaimInstructions(p) {
+  const code = `${p.code.slice(0, 4)}-${p.code.slice(4)}`;
+  const until = new Date(p.expires_at * 1000).toTimeString().slice(0, 5);
+  const what = p.kind === 'bind' ? `bind the agent "${p.name}" to their account` : `register the agent "${p.name}"`;
+  console.log(`Human approval needed to ${what}.`);
+  console.log('Ask your human to:');
+  console.log(`  1. open   ${p.claim_url}`);
+  console.log(`  2. sign in (or create an account) and enter the code:  ${code}`);
+  console.log(`This request expires at ${until} (${Math.round((p.expires_at - Date.now() / 1000) / 60)} min).`);
+}
+
+/** 轮询认领结果直到批准 / 过期；批准后保存凭证并清理待办文件 */
+async function followClaim(p, { wait }) {
+  hint(`Waiting for approval… (Ctrl-C is safe; continue later with: anotify${p.profile ? ` --profile ${p.profile}` : ''} ${p.kind === 'bind' ? 'bind' : 'register'} --resume)`);
+  for (;;) {
+    const r = await api({ server: p.server }, 'POST', `/v1/agents/claims/${p.claim_id}/poll`, {
+      body: { poll_token: p.poll_token, wait: wait ? 25 : 0 },
+      timeoutMs: 40_000,
+    });
+    if (r.status === 'pending') {
+      if (!wait) return;
+      continue;
+    }
+    clearPendingClaim(p.profile ?? undefined);
+    if (r.status === 'consumed' && p.kind === 'bind') {
+      console.log(`✓ "${p.name}" is now bound to the approving human's account`);
+      return;
+    }
+    if (r.status === 'consumed' && r.token) {
+      finishRegistration(r, p.server, p.save);
+      return;
+    }
+    if (r.status === 'consumed') throw new Error('This registration was already collected by another process; its token cannot be shown again. Start over with anotify register.');
+    if (r.status === 'expired') throw new Error('The approval request expired (10 min). Start over.');
+    if (r.status === 'locked') throw new Error('Too many wrong codes were entered; the request is void. Start over.');
+    throw new Error(`Unexpected claim status: ${r.status}`);
+  }
+}
+
+function finishRegistration(resp, server, save) {
+  console.log('✓ Identity created');
+  console.log(`  id   : ${resp.agent_id}  (immutable, globally unique)`);
+  console.log(`  name : ${resp.display_name}  (display name; change it with anotify rename)`);
+  console.log(`  token: ${resp.token}`);
+  if (save === false) {
+    console.log('  (--no-save: credentials file untouched. Set ANOTIFY_SERVER / ANOTIFY_TOKEN env vars, or import it later with anotify profile add)');
+  } else {
+    const file = saveCredentials({
+      server, agent: resp.display_name, agent_id: resp.agent_id, token: resp.token,
+    }, process.env.ANOTIFY_PROFILE);
+    console.log(`  (Saved to ${file} — keep it private)`);
+  }
+}
 
 // ---------- profiles：同一台机器上的多身份 ----------
 
@@ -182,6 +285,9 @@ program
     console.log(`name : ${me.display_name}`);
     console.log(`server: ${cred.server}`);
     console.log('token : ✓ valid');
+    if (me.owned !== undefined) {
+      console.log(`owner : ${me.owned ? '✓ bound to a human account' : 'none (bind it with: anotify bind)'}`);
+    }
     if (cred.agent && cred.agent !== me.display_name) {
       console.log(`⚠ The local credentials file records "${cred.agent}" but the server says "${me.display_name}".`);
     }
@@ -385,7 +491,7 @@ async function sendFile(cred, chName, filePath, caption, replyTo) {
 
 program
   .command('download <channel> <seq>')
-  .description('Download the file attached to file message #seq (sha256-verified; pure read, cursor untouched)')
+  .description('Download the file of message #seq (sha256-verified; cursor untouched). Files are deleted from the server once every recipient has downloaded them')
   .option('-o, --output <path>', 'Output path ("-" for stdout); defaults to the original file name in the current directory')
   .option('-f, --force', 'Overwrite an existing output file')
   .action((chName, seqArg, opts) => run(async () => {
@@ -428,9 +534,17 @@ program
       if (!toStdout) rmSync(part, { force: true });
       throw new Error(`sha256 mismatch (expected ${meta.sha256}, got ${digest}); download discarded`);
     }
+    if (!toStdout) renameSync(part, out);
+    // 收件确认：sha256 校验通过才算收到；全部收件人确认后服务端删除文件（接收即删除）
+    const receipt = await api(cred, 'POST', `/v1/channels/${ch}/files/${encodeURIComponent(meta.file_id)}/received`)
+      .catch(() => null); // ≤0.5 服务端没有该接口
     if (toStdout) return;
-    renameSync(part, out);
     console.log(`✓ Saved ${out} (${humanSize(meta.size)}, sha256 verified)`);
+    if (receipt?.deleted) {
+      console.log('  (every recipient has it now — the server copy was deleted; this local file is the only copy)');
+    } else if (receipt) {
+      console.log(`  (server copy kept until ${receipt.remaining_recipients} more recipient(s) download it, or it expires)`);
+    }
   }));
 
 program
@@ -483,7 +597,7 @@ program
 program
   .command('serve')
   .description('Start the anotify-backend (for development inside the monorepo; deploy anotify-backend separately in production)')
-  .option('--db <path>', 'SQLite database path', './anotify.db')
+  .option('--database-url <url>', 'Postgres connection URL (default: $DATABASE_URL)')
   .option('--host <host>', 'Listen address', '0.0.0.0')
   .option('--port <port>', 'Listen port', '8000')
   .action((opts) => {
@@ -499,7 +613,12 @@ program
     }
     const child = spawn(process.execPath, [serverJs], {
       stdio: 'inherit',
-      env: { ...process.env, ANOTIFY_DB: opts.db, HOST: opts.host, PORT: opts.port },
+      env: {
+        ...process.env,
+        ...(opts.databaseUrl ? { DATABASE_URL: opts.databaseUrl } : {}),
+        HOST: opts.host,
+        PORT: opts.port,
+      },
     });
     for (const sig of ['SIGINT', 'SIGTERM']) {
       process.on(sig, () => child.kill(sig));
