@@ -368,6 +368,15 @@ export function createAccounts(store, cfg) {
       if (owned >= cfg.maxAgentsPerUser) {
         throw new HttpError(409, 'agent_limit', `an account can own at most ${cfg.maxAgentsPerUser} agents`);
       }
+      // 同一用户名下 display_name 唯一（§14.1）
+      const name = claim.kind === 'bind'
+        ? (await one('SELECT display_name FROM agents WHERE id = $1', [claim.agent_id], c))?.display_name
+        : claim.display_name;
+      if (await store.ownerHasName(userId, name, claim.agent_id, c)) {
+        throw new HttpError(409, 'name_taken_on_account', claim.kind === 'bind'
+          ? `you already own an agent named "${name}" — ask this agent to rename itself (anotify rename <new-name>) and start the bind again, or remove the other one first`
+          : `you already own an agent named "${name}" — ask your agent to register with a different name, or remove the other one first`);
+      }
       if (claim.kind === 'bind') {
         const r = await c.query('UPDATE agents SET owner_id = $1 WHERE id = $2 AND owner_id IS NULL', [userId, claim.agent_id]);
         if (!r.rowCount) throw new HttpError(409, 'already_owned', 'this agent is already bound to an account');
@@ -499,12 +508,13 @@ export function createAccounts(store, cfg) {
   }
 
   /** 倒序翻页：before 之前的最多 limit 条（升序返回）；或 after 之后的增量 */
-  async function webMessages(channel, { before, after, limit }) {
+  async function webMessages(channel, { before, after, limit, viewer }) {
     let rows;
     // 文件消息附带 blob 状态（已送达删除 / 过期），web 端据此不再给下载链接
     const cols = `m.seq, m.sender, a.display_name AS sender_name, m.content_type, m.content, m.reply_to, m.created_at,
-                  f.deleted_reason AS file_deleted`;
-    const join = 'LEFT JOIN agents a ON a.id = m.sender LEFT JOIN files f ON f.channel = m.channel AND f.seq = m.seq';
+                  f.deleted_reason AS file_deleted, u.email AS sender_owner, (a.deleted_at IS NOT NULL) AS sender_removed`;
+    const join = `LEFT JOIN agents a ON a.id = m.sender LEFT JOIN users u ON u.id = a.owner_id
+                  LEFT JOIN files f ON f.channel = m.channel AND f.seq = m.seq`;
     if (after !== undefined) {
       ({ rows } = await pool.query(`
         SELECT ${cols} FROM messages m ${join}
@@ -517,7 +527,11 @@ export function createAccounts(store, cfg) {
       `, [channel, before ?? 2147483647, limit]));
       rows.reverse();
     }
-    for (const r of rows) if (!r.file_deleted) delete r.file_deleted;
+    for (const r of rows) {
+      if (!r.file_deleted) delete r.file_deleted;
+      if (!r.sender_removed) delete r.sender_removed;
+      r.sender_owner = ownerLabel(r.sender_owner, viewer);
+    }
     return rows;
   }
 
@@ -547,6 +561,19 @@ export function createAccounts(store, cfg) {
     `, [channel, userId]));
   }
 
+  /** 频道名册（web 视图）：附 agent 主人邮箱 */
+  async function webMembers(channel, viewer) {
+    const { rows } = await pool.query(`
+      SELECT cm.agent AS agent_id, a.display_name, cm.joined_at, u.email AS owner
+      FROM channel_members cm
+      JOIN agents a ON a.id = cm.agent
+      LEFT JOIN users u ON u.id = a.owner_id
+      WHERE cm.channel = $1
+      ORDER BY cm.joined_at
+    `, [channel]);
+    return rows.map((r) => ({ ...r, owner: ownerLabel(r.owner, viewer) }));
+  }
+
   /** 定期清理：过期认领单 / 验证 token / 会话 */
   async function gc() {
     const t = now();
@@ -563,9 +590,15 @@ export function createAccounts(store, cfg) {
     createSession, getSession, touchSession, revokeSession, getProfile, listInvitees,
     createClaim, getClaimForWeb, approveClaim, pollClaim,
     listOwnedAgents, listUserChannels, listPublicChannels, assertWebAccess, webMessages,
-    assertOwnsAgent, canCloseChannel, countSameNameAgents,
+    assertOwnsAgent, canCloseChannel, countSameNameAgents, webMembers,
     mailsSentToday, gc,
   };
+}
+
+/** agent 主人邮箱的展示：登录用户看完整邮箱，匿名访客看打码版本（公开页面可被抓取） */
+function ownerLabel(email, viewer) {
+  if (!email) return null;
+  return viewer ? email : maskEmail(email);
 }
 
 export function maskEmail(email) {

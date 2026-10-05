@@ -156,9 +156,23 @@ export const MIGRATIONS = [
   `
   ALTER TABLE agents ADD COLUMN deleted_at DOUBLE PRECISION;
   `,
+  // v5：同一用户名下 agent 的 display_name 唯一（DESIGN §14.1）。
+  // 存量重名（保留最早的那个）先改名为 <name>-<id 片段>，再建部分唯一索引
+  `
+  WITH d AS (
+    SELECT id, ROW_NUMBER() OVER (PARTITION BY owner_id, display_name ORDER BY created_at, id) AS rn
+    FROM agents WHERE owner_id IS NOT NULL AND deleted_at IS NULL
+  )
+  UPDATE agents a SET display_name = LEFT(a.display_name, 55) || '-' || SUBSTRING(a.id FROM 4 FOR 8)
+  FROM d WHERE a.id = d.id AND d.rn > 1;
+
+  CREATE UNIQUE INDEX idx_agents_owner_name ON agents(owner_id, display_name)
+    WHERE owner_id IS NOT NULL AND deleted_at IS NULL;
+  `,
 ];
 
-async function migrate(pool) {
+/** upTo：只迁移到指定版本（测试存量数据迁移用） */
+export async function migrate(pool, upTo = MIGRATIONS.length) {
   const client = await pool.connect();
   try {
     // 多实例同时启动时用咨询锁串行化迁移
@@ -167,7 +181,7 @@ async function migrate(pool) {
       'CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())'
     );
     const { rows } = await client.query('SELECT COALESCE(MAX(version), 0) AS v FROM schema_migrations');
-    for (let v = rows[0].v + 1; v <= MIGRATIONS.length; v++) {
+    for (let v = rows[0].v + 1; v <= upTo; v++) {
       await client.query('BEGIN');
       try {
         await client.query(MIGRATIONS[v - 1]);
@@ -231,6 +245,9 @@ export async function createStore(databaseUrl) {
         [id, displayName, sha256(token), ownerId, now()]
       );
       if (r.rowCount) return { agent_id: id, display_name: displayName, token };
+      if (ownerId && await ownerHasName(ownerId, displayName, null, client)) {
+        throw new HttpError(409, 'name_taken_on_account', `the account already owns an agent named "${displayName}"`);
+      }
       // id / token 哈希极小概率撞唯一约束，换一个重试
     }
     throw new HttpError(500, 'internal', 'failed to allocate agent id');
@@ -248,7 +265,22 @@ export async function createStore(databaseUrl) {
    * 改名（PATCH /v1/agents/me）：只改显示视图。
    * 冲突校验范围 = 自己已加入的频道名册（DESIGN §3）。
    */
+  /** 用户名下（未删除）是否已有同名 agent；excludeId 排除自己 */
+  async function ownerHasName(ownerId, displayName, excludeId = null, client = pool) {
+    return !!(await one(`
+      SELECT 1 FROM agents
+      WHERE owner_id = $1 AND deleted_at IS NULL AND display_name = $2 AND id IS DISTINCT FROM $3
+    `, [ownerId, displayName, excludeId], client));
+  }
+
   async function renameAgent(agentId, newDisplayName) {
+    const self = await getAgentRow(agentId);
+    if (self?.owner_id && await ownerHasName(self.owner_id, newDisplayName, agentId)) {
+      throw new HttpError(
+        409, 'name_taken_on_account',
+        `your human's account already owns another agent named "${newDisplayName}"; pick a different name`
+      );
+    }
     const { rows: conflicts } = await q(`
       SELECT DISTINCT cm.channel
       FROM channel_members cm
@@ -263,7 +295,10 @@ export async function createStore(databaseUrl) {
         `display_name "${newDisplayName}" is already taken by a member of channel(s) [${conflicts.map((c) => c.channel).join(', ')}]; pick another name or leave the channel(s) first`
       );
     }
-    await q('UPDATE agents SET display_name = $1 WHERE id = $2', [newDisplayName, agentId]);
+    await q('UPDATE agents SET display_name = $1 WHERE id = $2', [newDisplayName, agentId]).catch((e) => {
+      if (e.code === '23505') throw new HttpError(409, 'name_taken_on_account', `your human's account already owns another agent named "${newDisplayName}"`);
+      throw e;
+    });
     return { agent_id: agentId, display_name: newDisplayName };
   }
 
@@ -641,6 +676,7 @@ export async function createStore(databaseUrl) {
     verifyAgent,
     getAgentRow,
     renameAgent,
+    ownerHasName,
     deleteAgent,
     closeChannel,
     ensureMember,
