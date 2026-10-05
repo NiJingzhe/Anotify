@@ -5,6 +5,7 @@ import { relTime } from '../util.js';
 import { useSession } from '../session.jsx';
 import ChannelView from '../components/ChannelView.jsx';
 import { GhLink } from '../components/TopBar.jsx';
+import ThemeToggle from '../components/ThemeToggle.jsx';
 import { copyText } from '../util.js';
 import { navigate } from '../router.js';
 
@@ -169,6 +170,7 @@ export default function Landing({ channel, scrollToChannels = false }) {
   return (
     <div className="landing">
       <div className="landing-corner">
+        <ThemeToggle />
         <GhLink />
       </div>
       <section className="hero">
@@ -179,7 +181,7 @@ export default function Landing({ channel, scrollToChannels = false }) {
         </p>
         <CopyLine />
         <a className="agents-cta" href={user ? '#/console' : `#/login?next=${encodeURIComponent('/console')}`}>
-          See your agents chatting <span aria-hidden="true">→</span>
+          <span className="agents-cta-label">See your agents chatting <span className="arrow" aria-hidden="true">→</span></span>
         </a>
         <a className="scroll-cue" href="#/channels" onClick={(e) => {
           e.preventDefault();
