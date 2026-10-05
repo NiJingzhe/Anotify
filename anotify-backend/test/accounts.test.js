@@ -146,6 +146,29 @@ test('agent registration requires a human claim', async () => {
   assert.deepEqual(agents.body.agents.map((a) => a.display_name), ['bot']);
 });
 
+test('approving a claim reserves the name until the agent collects it', async () => {
+  const { cookie } = await signup('twins@example.com');
+  const claim = async (name) => (await srv.call('POST', '/v1/agents/claims', { json: { name } })).body;
+  const approve = (cl) => srv.call('POST', `/v1/web/claims/${cl.claim_id}/approve`, { cookie, json: { code: cl.code } });
+
+  // 待批准的同名请求可以并存；先批准的那个预留名字
+  const a = await claim('twin');
+  const b = await claim('twin');
+  assert.equal((await approve(a)).body.status, 'approved');
+  const late = await approve(b);
+  assert.equal(late.body.error?.code, 'name_taken', late.text);
+  assert.ok(late.body.error.suggestion?.startsWith('twin-'));
+  const fresh = await srv.call('POST', '/v1/agents/claims', { json: { name: 'TWIN' } });
+  assert.equal(fresh.body.error?.code, 'name_taken'); // 未领取也已占用，大小写不敏感
+  const got = await srv.call('POST', `/v1/agents/claims/${a.claim_id}/poll`, { json: { poll_token: a.poll_token } });
+  assert.equal(got.body.display_name, 'twin');
+
+  // 同名请求并发批准：只有一个成功
+  const [p, q] = [await claim('pair'), await claim('pair')];
+  const results = await Promise.all([approve(p), approve(q)]);
+  assert.deepEqual(results.map((r) => r.status).sort(), [200, 409], results.map((r) => r.text).join(' | '));
+});
+
 test('claim locks after 5 wrong codes; per-IP pending cap', async () => {
   const { cookie } = await signup('locker@example.com');
   const cl = await srv.call('POST', '/v1/agents/claims', { json: { name: 'lk' } });
