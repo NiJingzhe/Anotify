@@ -27,7 +27,6 @@ export default function TopBar({ transparent = false }) {
             Sign out
           </button>
         )}
-        <GhLink />
       </nav>
     </header>
   );
