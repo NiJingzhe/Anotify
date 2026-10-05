@@ -7,8 +7,9 @@ import { nameHue, relTime } from '../util.js';
 import TopBar from '../components/TopBar.jsx';
 import ChannelView from '../components/ChannelView.jsx';
 import CopyButton from '../components/CopyButton.jsx';
+import ConfirmDialog from '../components/ConfirmDialog.jsx';
 
-function AccountCard({ user }) {
+function AccountCard({ user, agentCount }) {
   const inviteLink = `${window.location.origin}/#/register?invite=${user.invite_code}`;
   return (
     <div className="side-card">
@@ -19,7 +20,7 @@ function AccountCard({ user }) {
         <CopyButton text={inviteLink} label="Copy link" className="btn btn-ghost btn-xs" />
       </div>
       <div className="muted small">
-        {user.invitee_count} invited · {user.agent_count} agent{user.agent_count === 1 ? '' : 's'}
+        {user.invitee_count} invited · {agentCount} agent{agentCount === 1 ? '' : 's'}
         {user.invited_by && <> · invited by {user.invited_by}</>}
       </div>
     </div>
@@ -43,6 +44,7 @@ export default function ConsolePage({ channel }) {
   const [agents, setAgents] = useState(null);
   const [channels, setChannels] = useState(null);
   const [error, setError] = useState(null);
+  const [removing, setRemoving] = useState(null);
 
   useEffect(() => {
     if (user === null) navigate(`/login?next=${encodeURIComponent('/console')}`, { replace: true });
@@ -80,7 +82,7 @@ export default function ConsolePage({ channel }) {
       <TopBar />
       <main className="console">
         <aside className="sidebar">
-          <AccountCard user={user} />
+          <AccountCard user={user} agentCount={agents?.length ?? user.agent_count} />
           <div className="side-section">
             <h3>My agents</h3>
             {agents === null && <p className="muted small">Loading…</p>}
@@ -91,6 +93,8 @@ export default function ConsolePage({ channel }) {
                   <span className="dot-color" style={{ '--hue': nameHue(a.display_name) }} />
                   <span className="agent-name">{a.display_name}</span>
                   <span className="muted small">{a.channels} ch</span>
+                  <button type="button" className="icon-danger" title={`Remove ${a.display_name}`}
+                    aria-label={`Remove agent ${a.display_name}`} onClick={() => setRemoving(a)}>✕</button>
                 </li>
               ))}
             </ul>
@@ -127,12 +131,40 @@ export default function ConsolePage({ channel }) {
         <section className="console-main panel">
           {error && <p className="form-error">{error.message}</p>}
           {agents?.length === 0 && <Onboarding />}
-          {channel && <ChannelView channel={channel} myAgents={current?.my_agents ?? []} />}
+          {channel && (
+            <ChannelView
+              key={channel}
+              channel={channel}
+              myAgents={current?.my_agents ?? []}
+              onClosed={async () => { await load(); navigate('/console', { replace: true }); }}
+            />
+          )}
           {!channel && agents?.length > 0 && channels?.length === 0 && (
             <div className="empty-state"><p>Your agents have not joined any channels yet.</p></div>
           )}
         </section>
       </main>
+      {removing && (
+        <ConfirmDialog
+          title={`Remove agent "${removing.display_name}"?`}
+          confirmText={removing.display_name}
+          actionLabel="Remove agent"
+          onClose={() => setRemoving(null)}
+          onConfirm={async () => {
+            await api('DELETE', `/v1/web/me/agents/${encodeURIComponent(removing.agent_id)}`, {});
+            setRemoving(null);
+            await load();
+            refresh();
+          }}
+        >
+          <p>This permanently deletes the identity <code>{removing.agent_id}</code>:</p>
+          <ul>
+            <li>its token stops working immediately — the agent must register again to come back</li>
+            <li>it leaves all {removing.channels} channel{removing.channels === 1 ? '' : 's'} it is in</li>
+            <li>messages it already sent stay in channel history</li>
+          </ul>
+        </ConfirmDialog>
+      )}
     </div>
   );
 }

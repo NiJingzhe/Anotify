@@ -152,6 +152,10 @@ export const MIGRATIONS = [
     PRIMARY KEY (file_id, agent)
   );
   `,
+  // v4：人类删除 agent（软删除：保留行以便历史消息仍能显示名字，token 永久失效）（DESIGN §14.6）
+  `
+  ALTER TABLE agents ADD COLUMN deleted_at DOUBLE PRECISION;
+  `,
 ];
 
 async function migrate(pool) {
@@ -261,6 +265,59 @@ export async function createStore(databaseUrl) {
     }
     await q('UPDATE agents SET display_name = $1 WHERE id = $2', [newDisplayName, agentId]);
     return { agent_id: agentId, display_name: newDisplayName };
+  }
+
+  /**
+   * 删除 agent（DESIGN §14.6）：token 立即失效、退出全部频道、清游标；历史消息保留。
+   * 它还没确认收到的文件不再等它：其余收件人都已收到（或已无收件人）的文件随之删除。
+   * 返回需要删除 blob 的 file id 列表。
+   */
+  async function deleteAgent(agentId) {
+    return tx(async (c) => {
+      const r = await c.query(
+        `UPDATE agents SET deleted_at = $1, token_hash = 'deleted:' || id
+         WHERE id = $2 AND deleted_at IS NULL`,
+        [now(), agentId]
+      );
+      if (!r.rowCount) return null;
+      await c.query('DELETE FROM channel_members WHERE agent = $1', [agentId]);
+      await c.query('DELETE FROM cursors WHERE agent = $1', [agentId]);
+      const { rows: pending } = await c.query(
+        'DELETE FROM file_recipients WHERE agent = $1 AND received_at IS NULL RETURNING file_id', [agentId]
+      );
+      const freed = [];
+      for (const { file_id: fileId } of pending) {
+        const left = await one(`
+          SELECT COUNT(*) FILTER (WHERE received_at IS NULL) AS pending, COUNT(*) AS total
+          FROM file_recipients WHERE file_id = $1
+        `, [fileId], c);
+        if (Number(left.pending) > 0) continue;
+        const reason = Number(left.total) > 0 ? 'delivered' : 'undeliverable';
+        if (await markFileDeleted(fileId, reason, c)) freed.push(fileId);
+      }
+      return { freed };
+    });
+  }
+
+  /**
+   * 关闭频道 = 永久删除（DESIGN §14.6）：消息、文件、名册、游标一并删除，频道名随即可再次创建。
+   * 返回需要删除 blob 的 file id 列表；频道不存在返回 null。
+   */
+  async function closeChannel(name) {
+    const result = await tx(async (c) => {
+      const ch = await one('SELECT name FROM channels WHERE name = $1 FOR UPDATE', [name], c);
+      if (!ch) return null;
+      const { rows: files } = await c.query('SELECT id FROM files WHERE channel = $1', [name]);
+      await c.query('DELETE FROM file_recipients WHERE file_id IN (SELECT id FROM files WHERE channel = $1)', [name]);
+      await c.query('DELETE FROM files WHERE channel = $1', [name]);
+      await c.query('DELETE FROM messages WHERE channel = $1', [name]);
+      await c.query('DELETE FROM cursors WHERE channel = $1', [name]);
+      await c.query('DELETE FROM channel_members WHERE channel = $1', [name]);
+      await c.query('DELETE FROM channels WHERE name = $1', [name]);
+      return { files: files.map((f) => f.id) };
+    });
+    if (result) events.emit('message', name); // 唤醒该频道上的长轮询
+    return result;
   }
 
   // ---- 频道名册 ----
@@ -584,6 +641,8 @@ export async function createStore(databaseUrl) {
     verifyAgent,
     getAgentRow,
     renameAgent,
+    deleteAgent,
+    closeChannel,
     ensureMember,
     listMembers,
     hasChannel,

@@ -643,3 +643,53 @@ code { font-family: var(--mono); font-size: 0.9em; }
 .claim-panel .auth-title { text-align: center; }
 .topnav > a, .topnav > button { white-space: nowrap; }
 .file-name.is-gone { color: var(--ink-soft); text-decoration: line-through; }
+
+/* ---------- 危险操作 ---------- */
+
+.btn-danger { color: #fff; background: var(--danger); border-color: var(--danger); }
+.btn-danger:hover:not(:disabled) { background: #951b31; border-color: #951b31; }
+.btn-danger-ghost { color: var(--danger); background: transparent; border-color: rgba(180, 35, 60, 0.45); }
+.btn-danger-ghost:hover:not(:disabled) { background: rgba(180, 35, 60, 0.08); border-color: var(--danger); }
+
+.icon-danger {
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s, border-color 0.12s;
+}
+.agent-list li:hover .icon-danger, .icon-danger:focus-visible { opacity: 1; }
+.icon-danger:hover { color: var(--danger); border-color: rgba(180, 35, 60, 0.4); }
+@media (hover: none) { .icon-danger { opacity: 1; } }
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(26, 31, 61, 0.35);
+  backdrop-filter: blur(2px);
+}
+.modal { width: min(480px, 100%); padding: 1.5rem 1.6rem 1.3rem; font-family: var(--sans); }
+.modal-title { margin: 0 0 0.6rem; font: 700 1.35rem var(--sans); overflow-wrap: anywhere; }
+.modal-body { font-size: 0.92rem; line-height: 1.55; }
+.modal-body ul { margin: 0.3rem 0 0.6rem; padding-left: 1.2rem; }
+.modal-confirm { display: flex; flex-direction: column; gap: 0.35rem; margin: 0.8rem 0; font-size: 0.86rem; font-weight: 600; }
+.modal-confirm input {
+  padding: 0.55rem 0.7rem;
+  font: 400 0.95rem var(--mono);
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  outline: none;
+}
+.modal-confirm input:focus { border-color: var(--danger); box-shadow: 0 0 0 3px rgba(180, 35, 60, 0.12); }
+.modal-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
