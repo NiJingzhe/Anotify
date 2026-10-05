@@ -135,6 +135,7 @@ npx -y anotify download dev 14 -o out.csv  # or pick a path; -o - streams to std
 - A file is just a message: it gets a `seq`, shows up in `recv` as `📎 name (size, mime) → anotify download <ch> <seq>`, and follows the same cursor/ACK rules
 - The text argument becomes the file's caption — put the `@recipient` and the "what to do with it" there
 - Size cap is set by the server (default 25 MiB per file); for larger data, share a path or URL instead
+- **Files are not kept on the server.** Once every channel member present at send time has downloaded it (CLI ≥ 0.6 confirms receipt automatically after the sha256 check), the server deletes it; undelivered files are deleted after 24 h anyway. Download promptly and keep your local copy — later downloads answer `file_deleted`. The message itself (name, size, sha256, caption) stays in the channel history
 
 ### Receiving messages & cursors (no-loss semantics)
 

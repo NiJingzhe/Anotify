@@ -30,6 +30,9 @@ const s3 = {
 };
 const maxFileBytes = Number(process.env.ANOTIFY_MAX_FILE_BYTES ?? 25 * 1024 * 1024);
 const filesQuotaBytes = Number(process.env.ANOTIFY_FILES_QUOTA_BYTES ?? 2 * 1024 * 1024 * 1024);
+// 接收即删除（DESIGN §12 生命周期）：全部收件人确认收到即删；兜底保留期过后无论如何删除
+const fileTtlSeconds = Number(process.env.ANOTIFY_FILE_TTL_HOURS ?? 24) * 3600;
+const fileGcSeconds = Number(process.env.ANOTIFY_FILE_GC_SECONDS ?? 600);
 
 // 人类用户账号（DESIGN §14）
 const production = process.env.NODE_ENV === 'production';
@@ -70,6 +73,14 @@ accounts.gc().catch((e) => console.error('gc failed:', e));
 const blobs = await createBlobStore({ dir: filesDir, s3 });
 const swept = await blobs.sweep((id) => store.hasFileId(id));
 if (swept) console.log(`files: swept ${swept} orphan blob(s)`);
+
+async function expireFiles() {
+  const ids = await store.expireFiles(Date.now() / 1000 - fileTtlSeconds);
+  for (const id of ids) await blobs.remove(id).catch((e) => console.error(`files: failed to remove ${id}:`, e.message));
+  if (ids.length) console.log(`files: expired ${ids.length} file(s)`);
+}
+setInterval(() => expireFiles().catch((e) => console.error('file expiry failed:', e)), fileGcSeconds * 1000).unref();
+await expireFiles();
 const app = new Hono();
 
 app.use(logger());
@@ -95,7 +106,7 @@ v1.post('/agents', async (c) => {
   if (!openRegistration) {
     throw new HttpError(
       410, 'registration_requires_claim',
-      'direct registration is closed: a human must approve new agents. Upgrade the CLI and run: npx -y anotify@latest register --name <name>'
+      'direct registration is closed: a human must approve new agents. Upgrade the CLI and run: npx -y anotify@latest register <name> --server <url>'
     );
   }
   const body = await parseJson(c);
@@ -112,6 +123,7 @@ v1.post('/agents', async (c) => {
 v1.get('/info', (c) => c.json({
   instance_id: store.instanceId,
   max_file_bytes: maxFileBytes,
+  file_ttl_seconds: fileTtlSeconds,
   web_url: webUrl,
   registration: openRegistration ? 'open' : 'claim',
 }));
@@ -353,10 +365,27 @@ authed.get('/channels/:ch/files/:id', async (c) => {
   return serveFile(ch, c.req.param('id'));
 });
 
+// POST /v1/channels/:ch/files/:id/received —— 收件确认（§12 生命周期）：客户端校验 sha256 后调用；全部收件人确认即删除
+authed.post('/channels/:ch/files/:id/received', async (c) => {
+  const ch = await requireChannel(c);
+  await requireAccess(c, ch);
+  const id = c.req.param('id');
+  const row = await store.getFile(ch, id);
+  if (!row) throw new HttpError(404, 'file_not_found', `file "${id}" not found in channel "${ch}"`);
+  const r = await store.confirmFileReceived(id, c.get('agentId'));
+  if (r.deleted) await blobs.remove(id).catch((e) => console.error(`files: failed to remove ${id}:`, e.message));
+  return c.json({ file_id: id, deleted: r.deleted || !!r.already_deleted, remaining_recipients: r.remaining });
+});
+
 /** 文件下载响应（agent 与 web 共用；访问门由调用方负责） */
 async function serveFile(ch, id) {
   const row = await store.getFile(ch, id);
   if (!row) throw new HttpError(404, 'file_not_found', `file "${id}" not found in channel "${ch}"`);
+  if (row.deleted_at) {
+    throw new HttpError(410, 'file_deleted', row.deleted_reason === 'expired'
+      ? `file "${row.name}" expired and was deleted from the server (files are kept at most ${fileTtlSeconds / 3600} h)`
+      : `file "${row.name}" was deleted from the server after every recipient received it (files are not kept once delivered)`);
+  }
   const stream = await blobs.open(id);
   if (!stream) throw new HttpError(410, 'file_gone', `file "${id}" is missing from server storage`);
   const encoded = encodeURIComponent(row.name);

@@ -514,12 +514,22 @@ CREATE TABLE files (
 - blob 存储（v0.6）：配置了 `ANOTIFY_S3_ENDPOINT` 时存 S3 兼容对象存储（compose 内自建 MinIO，bucket `ANOTIFY_S3_BUCKET`，对象键 `files/<file_id>`）；否则存本地目录 `ANOTIFY_FILES_DIR`（开发 / 单机兜底）。上传中的临时文件始终在 `ANOTIFY_FILES_DIR/tmp/`
 - 写入顺序：请求体流式落临时文件（边写边算 sha256 / 计量）→ 转正（上传对象 / 复制到目录）→ **同一事务**写 `files` 行与文件消息；事务失败立即删除 blob
 - **孤儿回收**：启动时清空 `tmp/`，并删除没有 `files` 行引用的 blob——崩溃窗口最多留下无引用 blob，由此兜底
-- 与日志一致，v1 文件**不删除、不过期**
 
 | 环境变量 | 默认 | 含义 |
 |---|---|---|
 | `ANOTIFY_MAX_FILE_BYTES` | 25 MiB | 单文件上限 |
 | `ANOTIFY_FILES_QUOTA_BYTES` | 2 GiB | 全服文件总量配额 |
+
+### 生命周期：接收即删除（v0.6）
+
+服务端不长期保留文件——文件只是「在 agent 之间搬运一次」的载体：
+
+- **收件人快照**：上传时把频道当前成员（除上传者）写进 `file_recipients`
+- **收件确认**：`POST /v1/channels/{ch}/files/{id}/received`。CLI 在下载完成且 sha256 校验通过后自动调用（中途断掉的下载不算收到）；上传者自己的确认不计数；web 端的人类下载只是查看，不确认
+- **删除**：全部收件人确认后，同一事务里标记 `files.deleted_at / deleted_reason='delivered'`，随后删除 blob；上传时频道里没有其他成员的，第一个确认的非上传者即触发删除
+- **兜底过期**：`ANOTIFY_FILE_TTL_HOURS`（默认 24）后仍未删除的文件一律标记 `expired` 并删除 blob（每 `ANOTIFY_FILE_GC_SECONDS`，默认 600 秒巡检一次）
+- 删除后：文件消息仍留在频道日志里（元数据不变），下载返回 `410 file_deleted`（错误信息区分「已送达」与「已过期」）；web 消息列表带 `file_deleted` 字段，不再给下载链接
+- 先标记、后删 blob：blob 删除失败时，孤儿回收（只认未删除的 `files` 行）下次启动兜底；配额只统计未删除的文件
 
 反向代理需放行 body 大小（nginx：`client_max_body_size 30m; proxy_request_buffering off;`）。
 

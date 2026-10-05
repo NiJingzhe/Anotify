@@ -140,6 +140,18 @@ export const MIGRATIONS = [
   );
   CREATE INDEX idx_agent_claims_ip ON agent_claims(requester_ip, status);
   `,
+  // v3：文件接收即删除（DESIGN §12「生命周期」）
+  `
+  ALTER TABLE files ADD COLUMN deleted_at DOUBLE PRECISION;
+  ALTER TABLE files ADD COLUMN deleted_reason TEXT;
+
+  CREATE TABLE file_recipients (
+    file_id     TEXT NOT NULL,
+    agent       TEXT NOT NULL,
+    received_at DOUBLE PRECISION,
+    PRIMARY KEY (file_id, agent)
+  );
+  `,
 ];
 
 async function migrate(pool) {
@@ -174,7 +186,7 @@ export async function createStore(databaseUrl) {
 
   const now = () => Date.now() / 1000;
   const q = (text, params) => pool.query(text, params);
-  const one = async (text, params) => (await pool.query(text, params)).rows[0];
+  const one = async (text, params, client = pool) => (await client.query(text, params)).rows[0];
 
   /** 事务：fn 收到专用 client，抛错即回滚 */
   async function tx(fn) {
@@ -413,6 +425,11 @@ export async function createStore(databaseUrl) {
         INSERT INTO files (id, channel, seq, uploader, name, size, sha256, mime, created_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       `, [fileId, channel, m.seq, sender, name, size, sha256, mime, m.created_at]);
+      // 收件人 = 上传这一刻除上传者外的全部成员；全部确认收到即删除 blob
+      await client.query(`
+        INSERT INTO file_recipients (file_id, agent)
+        SELECT $1, agent FROM channel_members WHERE channel = $2 AND agent != $3
+      `, [fileId, channel, sender]);
       return m;
     });
     events.emit('message', channel);
@@ -421,18 +438,65 @@ export async function createStore(databaseUrl) {
 
   async function getFile(channel, fileId) {
     const row = await one(
-      'SELECT id, channel, seq, uploader, name, size, sha256, mime, created_at FROM files WHERE channel = $1 AND id = $2',
+      `SELECT id, channel, seq, uploader, name, size, sha256, mime, created_at, deleted_at, deleted_reason
+       FROM files WHERE channel = $1 AND id = $2`,
       [channel, fileId]
     );
     return row ? { ...row, size: Number(row.size) } : undefined;
   }
 
+  /** blob 仍应存在（有 files 行且未删除）——孤儿回收据此判断 */
   async function hasFileId(fileId) {
-    return !!(await one('SELECT 1 FROM files WHERE id = $1', [fileId]));
+    return !!(await one('SELECT 1 FROM files WHERE id = $1 AND deleted_at IS NULL', [fileId]));
   }
 
   async function filesTotalBytes() {
-    return Number((await one('SELECT COALESCE(SUM(size), 0) AS s FROM files')).s);
+    return Number((await one('SELECT COALESCE(SUM(size), 0) AS s FROM files WHERE deleted_at IS NULL')).s);
+  }
+
+  /** 先在库里标记删除（之后 blob 删除失败也会被孤儿回收兜底）；返回是否由本次调用标记 */
+  async function markFileDeleted(fileId, reason, client = pool) {
+    const r = await client.query(
+      'UPDATE files SET deleted_at = $1, deleted_reason = $2 WHERE id = $3 AND deleted_at IS NULL',
+      [now(), reason, fileId]
+    );
+    return r.rowCount > 0;
+  }
+
+  /**
+   * 收件确认（DESIGN §12 生命周期）：记录 agent 已收到；全部收件人都确认后标记删除。
+   * 上传时频道里没有其他成员的，第一个确认收到的非上传者即触发删除。
+   * 返回 { deleted, remaining }，deleted=true 表示调用方应删除 blob。
+   */
+  async function confirmFileReceived(fileId, agentId) {
+    return tx(async (c) => {
+      const f = await one('SELECT uploader, deleted_at FROM files WHERE id = $1 FOR UPDATE', [fileId], c);
+      if (!f || f.deleted_at) return { deleted: false, already_deleted: !!f?.deleted_at, remaining: 0 };
+      if (f.uploader === agentId) {
+        const n = await one('SELECT COUNT(*) AS n FROM file_recipients WHERE file_id = $1 AND received_at IS NULL', [fileId], c);
+        return { deleted: false, remaining: Number(n.n) };
+      }
+      await c.query(`
+        INSERT INTO file_recipients (file_id, agent, received_at) VALUES ($1, $2, $3)
+        ON CONFLICT (file_id, agent) DO UPDATE SET received_at = COALESCE(file_recipients.received_at, excluded.received_at)
+      `, [fileId, agentId, now()]);
+      const remaining = Number((await one(
+        'SELECT COUNT(*) AS n FROM file_recipients WHERE file_id = $1 AND received_at IS NULL', [fileId], c
+      )).n);
+      if (remaining > 0) return { deleted: false, remaining };
+      await markFileDeleted(fileId, 'delivered', c);
+      return { deleted: true, remaining: 0 };
+    });
+  }
+
+  /** 超过保留期仍未删除的文件：标记 expired，返回 id 列表（调用方删 blob） */
+  async function expireFiles(olderThan) {
+    const { rows } = await pool.query(`
+      UPDATE files SET deleted_at = $1, deleted_reason = 'expired'
+      WHERE deleted_at IS NULL AND created_at < $2
+      RETURNING id
+    `, [now(), olderThan]);
+    return rows.map((r) => r.id);
   }
 
   async function messagesSince(channel, since, limit) {
@@ -534,6 +598,9 @@ export async function createStore(databaseUrl) {
     getFile,
     hasFileId,
     filesTotalBytes,
+    markFileDeleted,
+    confirmFileReceived,
+    expireFiles,
     getCursorRow,
     ensureCursor,
     setCursor,

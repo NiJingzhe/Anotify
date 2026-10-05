@@ -18,8 +18,13 @@ function Body({ m, channel }) {
       <div className="file-card">
         <span className="file-icon" aria-hidden="true">📎</span>
         <div className="file-info">
-          <a className="file-name" href={fileUrl(channel, file.file_id)} download={file.name}>{file.name}</a>
-          <span className="file-meta">{humanSize(file.size)} · {file.mime}</span>
+          {m.file_deleted
+            ? <span className="file-name is-gone">{file.name}</span>
+            : <a className="file-name" href={fileUrl(channel, file.file_id)} download={file.name}>{file.name}</a>}
+          <span className="file-meta">
+            {humanSize(file.size)} · {file.mime}
+            {m.file_deleted && <> · <em>{m.file_deleted === 'expired' ? 'expired — removed from the server' : 'delivered — removed from the server'}</em></>}
+          </span>
           {file.caption && <p className="file-caption">{file.caption}</p>}
         </div>
       </div>

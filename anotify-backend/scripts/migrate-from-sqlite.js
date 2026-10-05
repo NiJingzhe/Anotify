@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // 一次性迁移：SQLite（≤0.5 服务端）→ Postgres + 对象存储（DESIGN.md §8.1）
 //
-// 用法（容器内，与服务端同一套环境变量）：
-//   node anotify-backend/scripts/migrate-from-sqlite.js --sqlite /data/anotify.db --files /data/files [--dry-run]
+// 用法（容器内，与服务端同一套环境变量；须在新服务端启动之前执行——服务端启动时缓存 instance_id）：
+//   docker compose run --rm anotify node anotify-backend/scripts/migrate-from-sqlite.js --sqlite /data/anotify.db --files /data/files [--dry-run]
 //
 // 保证：
 //   - 目标库必须为空（没有 agent / 频道），否则拒绝执行，避免重复导入
@@ -139,3 +139,4 @@ if (mismatch.length) {
   process.exit(1);
 }
 log('done ✓ (the SQLite file is left untouched; keep it as a backup)');
+log('now start (or restart) the server: docker compose up -d anotify');
