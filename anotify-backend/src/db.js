@@ -254,7 +254,7 @@ export async function createStore(databaseUrl) {
   }
 
   async function verifyAgent(token) {
-    return (await one('SELECT id, display_name FROM agents WHERE token_hash = $1', [sha256(token)])) ?? null;
+    return (await one('SELECT id, display_name, owner_id FROM agents WHERE token_hash = $1', [sha256(token)])) ?? null;
   }
 
   async function getAgentRow(agentId) {
