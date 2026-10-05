@@ -995,3 +995,16 @@ html.overlay-open { overflow: hidden; }
   .modal { padding: 1.2rem 1.1rem 1.1rem; }
   .modal-actions { flex-wrap: wrap; }
 }
+
+@media (max-width: 400px) {
+  /* 320px 级别：导航项多时顶栏换行（brand 一行、nav 一行），不再硬塞单行 */
+  .topbar { flex-wrap: wrap; row-gap: 0.35rem; }
+  .topnav { gap: 0.45rem; font-size: 0.78rem; }
+  .topnav .icon-btn { width: 30px; height: 30px; }
+  /* 面板宽度跟着收紧，贴边留白减小，保证 320px 不横向溢出 */
+  .app-main { padding-left: 0.75rem; padding-right: 0.75rem; }
+  .auth-panel, .claim-panel { width: min(440px, 90vw); }
+  /* 8 格验证码：宽度随视口收缩（480px 断点的固定宽在 320px 放不下） */
+  .code-input { gap: 0.22rem; }
+  .code-cell { width: clamp(1.6rem, 8vw, 2.15rem); }
+}
