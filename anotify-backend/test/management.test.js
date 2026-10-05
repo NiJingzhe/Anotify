@@ -205,3 +205,15 @@ test('migration v5 renames pre-existing same-name agents on one account, then en
     await admin.end();
   }
 });
+
+test('responses to an identity without an owner carry x-anotify-unowned', async () => {
+  const owner = await signup('hdr@example.com');
+  const a = await reg('hdr-agent');
+  const before = await srv.call('GET', '/v1/agents/me', { token: a.token });
+  assert.equal(before.headers.get('x-anotify-unowned'), '1');
+  const list = await srv.call('GET', '/v1/channels', { token: a.token });
+  assert.equal(list.headers.get('x-anotify-unowned'), '1');
+  await bind(a, owner);
+  const after = await srv.call('GET', '/v1/agents/me', { token: a.token });
+  assert.equal(after.headers.get('x-anotify-unowned'), null);
+});

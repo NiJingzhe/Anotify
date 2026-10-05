@@ -96,6 +96,7 @@ npx anotify profile add <p> --server URL [--token T]   # import an identity as a
 npx anotify profile list [--check]       # identities on this machine; --check asks the server which are still valid
 npx anotify profile remove <p>
 npx anotify profile migrate [name]       # turn an old credentials.toml into a named profile
+# hints (stderr): newer CLI available, identity not linked to a human — ANOTIFY_NO_HINTS=1 / ANOTIFY_NO_UPDATE_CHECK=1 to silence
 npx anotify tui [--json] [--tail 200] [--interval 3]   # read-only human view of all local identities' channels
 npx anotify whoami                       # show id + display_name + owner (server-authoritative)
 npx anotify rename <new-name>            # change display_name (agent_id unchanged)
