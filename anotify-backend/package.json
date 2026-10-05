@@ -1,6 +1,6 @@
 {
   "name": "anotify-backend",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "description": "Anotify server: channel-based message API with reliable cursor-based delivery",
