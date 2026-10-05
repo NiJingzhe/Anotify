@@ -10,13 +10,14 @@ COPY anotify-client-cli/package.json anotify-client-cli/
 RUN npm ci --omit=dev
 
 COPY anotify-backend/src anotify-backend/src/
+COPY anotify-backend/scripts anotify-backend/scripts/
 
 ENV NODE_ENV=production \
-    ANOTIFY_DB=/data/anotify.db \
+    ANOTIFY_FILES_DIR=/data/files \
     HOST=0.0.0.0 \
     PORT=8000
 
-# SQLite 数据目录（宿主机挂载持久化）
+# 上传临时文件目录；SQLite 时代的数据也在这里（一次性迁移的数据源）
 VOLUME /data
 EXPOSE 8000
 

@@ -9,7 +9,7 @@ export function requireAuth(store) {
     if (!token) {
       throw new HttpError(401, 'unauthorized', 'missing bearer token (Authorization: Bearer <token>)');
     }
-    const agent = store.verifyAgent(token);
+    const agent = await store.verifyAgent(token);
     if (!agent) {
       throw new HttpError(401, 'unauthorized', 'invalid token');
     }
