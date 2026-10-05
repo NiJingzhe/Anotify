@@ -106,3 +106,35 @@ body { color: var(--ink); font-family: var(--sans); }
 .ripple { position: absolute; width: 70px; height: 70px; margin: -35px 0 0 -35px; border-radius: 50%; border: 3px solid rgba(26,31,61,0.55); }
 
 .cta { padding: 16px 30px; font: 500 28px var(--mono); }
+
+/* ---------- 用法：首页卡片 → agent 对话窗口 ---------- */
+.mini-landing { width: 840px; padding: 54px 50px 50px; text-align: center; }
+.mini-title { font: 700 128px/1.05 var(--serif); margin: 8px 0 6px; }
+.mini-tag { font: 600 28px var(--serif); color: var(--ink-soft); margin-bottom: 34px; }
+.mini-tag em { color: var(--ink); }
+.copy-label { font: italic 500 21px var(--serif); color: var(--ink-soft); margin-bottom: 12px; }
+.copy-box { display: flex; align-items: center; gap: 16px; padding: 18px 22px; text-align: left; border-radius: 16px;
+  background: rgba(255, 255, 255, 0.5); border: 1px solid rgba(26, 31, 61, 0.22); transition: none; }
+.copy-box.hover { background: rgba(255, 255, 255, 0.78); border-color: rgba(26, 31, 61, 0.75); box-shadow: 0 14px 40px rgba(26, 31, 61, 0.16); }
+.copy-box code { flex: 1; font: 500 21px/1.5 var(--mono); }
+.copy-hint { flex-shrink: 0; padding: 4px 14px; border-radius: 999px; border: 1px solid rgba(26, 31, 61, 0.35);
+  font: italic 600 20px var(--serif); background: rgba(255, 255, 255, 0.6); }
+.copy-hint.is-copied { background: #1d7a4f; color: #fff; border-color: #1d7a4f; }
+
+.agentwin { width: 820px; height: 800px; display: flex; flex-direction: column; overflow: hidden; }
+.chat { flex: 1; padding: 22px 28px 10px; display: flex; flex-direction: column; gap: 14px; overflow: hidden; }
+.msg-user { align-self: flex-end; max-width: 80%; padding: 14px 20px; border-radius: 18px 18px 4px 18px;
+  background: var(--ink); color: #fff; font: 500 21px/1.45 var(--sans); }
+.msg-ai { font: 500 21px/1.5 var(--sans); }
+.msg-ai.ok-line { color: #1d7a4f; font-weight: 600; }
+.msg-ai.invite { padding: 14px 18px; border-radius: 14px; background: rgba(255, 255, 255, 0.7);
+  border: 1px dashed rgba(26, 31, 61, 0.35); font: 500 18px/1.5 var(--mono); }
+.mono { font-family: var(--mono); }
+.link { font: 600 20px var(--mono); }
+.link.hover { background: rgba(255, 200, 60, 0.9); text-decoration: underline; }
+.input { margin: 10px 22px 22px; padding: 18px 20px; border-radius: 16px; background: rgba(255, 255, 255, 0.7);
+  border: 1.5px solid rgba(26, 31, 61, 0.18); font: 500 20px var(--sans); min-height: 64px; }
+.input.focus { border-color: var(--ink); box-shadow: 0 0 0 4px rgba(26, 31, 61, 0.1); }
+.input .ph { color: rgba(26, 31, 61, 0.4); }
+.input .pasted { background: rgba(120, 160, 255, 0.28); border-radius: 4px; }
+.keycap { padding: 12px 22px; border-radius: 14px; font: 700 30px var(--sans); white-space: nowrap; }

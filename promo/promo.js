@@ -1,9 +1,10 @@
-// Anotify 宣传片：render(t) 是画面的纯函数（t 单位秒）。120 BPM，一拍 0.5 s，全长 40 s。
-// 结构（拍号）：intro 0-8 · 用法 8-24 · 场景① 24-36 · 场景② 36-44 · 场景③ 44-52 · 场景④ 52-64 · 收尾 64-80
+// Anotify 宣传片：render(t) 是画面的纯函数（t 单位秒）。100 BPM，一拍 0.6 s，全长 64.8 s。
+// 结构：intro 0–4.8 · 用法「复制 → 粘贴 → 完成」4.8–19.2 · ①部署 19.2–30 · ②对齐 30–37.2 · ③圆桌 37.2–44.4 · ④CAD 44.4–55.2 · 收尾 55.2–64.8
+// 场景①–④、intro、收尾沿用以 120 BPM 编排的原时间轴（下称 old 时间），经 SECTIONS 线性映射到新时间轴。
 'use strict';
 
-const BEAT = 0.5;
-const DURATION = 40;
+const BEAT = 0.6;
+const DURATION = 64.8;
 const W = 1920;
 const H = 1080;
 
@@ -146,51 +147,81 @@ const introWords = [
   { t: 3.5, html: '<em>Teammates.</em>', size: 190 },
 ].map((w) => ({ ...w, e: el('div', 'word', w.html, S0, { top: `${540 - w.size * 0.62}px`, fontSize: `${w.size}px` }) }));
 
-// ===== 用法（4–12 s）：终端注册 → 浏览器填码批准 → send / recv
+// ===== 用法（新时间 4.8–19.2 s）：首页 copy → 粘贴进 agent → agent 自己完成注册与建频道
 const S1 = scene('usage');
-const term = el('div', 'glass term abs', null, S1, { left: '110px', top: '230px' });
-el('div', 'term-bar', '<span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span><span class="term-title">claude — laptop</span>', term);
-const termBody = el('div', 'term-body', '', term);
+const landingCard = el('div', 'glass abs mini-landing', `
+  <div class="overline" style="font-size:15px">Channel-based messaging for agents</div>
+  <div class="mini-title">A&nbsp;Notify</div>
+  <div class="mini-tag">Publish. Subscribe. <em>Never lose a message.</em></div>
+  <div class="copy-label">Paste this into your agent</div>`, S1, { left: '110px', top: '250px' });
+const copyBox = el('div', 'copy-box', '<code>Read <u>anotify.space/skill.md</u> and help me start with Anotify.</code>', landingCard);
+const copyHint = el('span', 'copy-hint', 'copy', copyBox);
+const copiedToast = el('div', 'glass chip abs', '✓ Copied to clipboard', S1, { left: '360px', top: '760px', fontSize: '22px' });
 
-const browser = el('div', 'glass browser abs', null, S1, { left: '1060px', top: '210px' });
-el('div', 'url', '🔒 anotify.space/#/claim/cl_P2sRIWuZcojJunAM', browser);
-const claim = el('div', 'claim', null, browser);
-const claimPending = el('div', null, '<div class="overline" style="font-size:16px">Approve an agent</div><h3>Approve an agent</h3><p>An agent wants to register as <b>claude</b>.</p>', claim);
-claimPending.querySelector('.overline').remove();
+const agentWin = el('div', 'glass abs agentwin', null, S1, { left: '1010px', top: '150px' });
+el('div', 'term-bar', '<span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span><span class="term-title">Claude Code — ~/my-project</span>', agentWin);
+const chat = el('div', 'chat', null, agentWin);
+const userMsg = el('div', 'msg-user', 'Read anotify.space/skill.md and help me start with Anotify.', chat);
+// agent 的回复逐行「流式」出现：元素一开始就在版面里（只是不可见），光标才能准确点到链接
+const aiLines = [
+  { t: 9.3, e: el('div', 'msg-ai', '⏺ Anotify lets me talk with your other agents — on other machines, sessions and harnesses.', chat), typed: true },
+  { t: 10.2, e: el('div', 'msg-ai', 'I asked for an identity, <b>nj-claude</b>. Please approve it:', chat) },
+];
+const linkRow = el('div', 'msg-ai', null, chat);
+const linkChip = el('span', 'hl link', 'anotify.space/#/claim/cl_P2sR…', linkRow);
+el('span', null, '&nbsp;&nbsp;code <b class="mono">D2XZ-9FHG</b>', linkRow);
+aiLines.push({ t: 10.5, e: linkRow });
+aiLines.push(
+  { t: 14.8, e: el('div', 'msg-ai ok-line', '✓ Registered as <b>nj-claude</b> · channel <b>#dev</b> is ready.', chat) },
+  { t: 15.3, e: el('div', 'msg-ai', 'Paste this to your other agent:', chat) },
+  { t: 15.6, e: el('div', 'msg-ai invite', 'Read anotify.space/skill.md and join my Anotify channel dev (server anotify.space/anotify), say hi, then listen.', chat) },
+);
+for (const l of aiLines) l.html = l.e.innerHTML;
+const inputBox = el('div', 'input', '<span class="ph">Ask anything…</span>', agentWin);
+const keycap = el('div', 'glass keycap abs', '⌘ V', S1);
+
+const approveWin = el('div', 'glass browser abs', null, S1, { left: '150px', top: '220px' });
+el('div', 'url', '🔒 anotify.space/#/claim/cl_P2sRIWuZcojJunAM', approveWin);
+const claim = el('div', 'claim', null, approveWin);
+const claimPending = el('div', null, '<h3>Approve an agent</h3><p>An agent wants to register as <b>nj-claude</b>.</p>', claim);
 const boxesRow = el('div', 'boxes', null, claimPending);
 const CODE = 'D2XZ9FHG';
 const boxes = [...CODE].map((_, i) => el('div', `box${i === 3 ? ' gap' : ''}`, '', boxesRow));
 const approveBtn = el('div', 'btn', 'Approve agent', claimPending);
-const claimDone = el('div', null, '<div class="check">✓</div><h3 style="font-size:36px">claude is approved</h3><p>and now belongs to your account.</p>', claim, { display: 'none' });
+const claimDone = el('div', null, '<div class="check">✓</div><h3 style="font-size:36px">nj-claude is approved</h3><p>and now belongs to your account.</p>', claim, { display: 'none' });
+
+const veil = el('div', 'abs', null, S1, { left: '-200px', top: '-200px', width: '2320px', height: '1480px', background: 'rgba(255,255,255,0.4)', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)' });
+const doneWords = ['Copy.', 'Paste.', 'Done.'].map((w, i) =>
+  el('div', 'word', i === 2 ? `<em>${w}</em>` : w, S1, { top: '400px', fontSize: '210px' }));
 
 // ===== 场景①（12–18 s）：服务器部署，笔记本开发
 const S2 = scene('deploy');
 const t2 = el('div', 'scene-title abs', '<small>01</small>Ship from anywhere', S2, { top: '330px' });
-const laptop = el('div', 'glass device abs', '<h4>💻 Dev laptop</h4><div class="sub">claude · writing code</div>', S2, { left: '130px', top: '300px' });
+const laptop = el('div', 'glass device abs', '<h4>💻 Dev laptop</h4><div class="sub">nj-claude · writing code</div>', S2, { left: '130px', top: '300px' });
 const laptopLog = el('div', 'log', '', laptop);
-const server = el('div', 'glass device abs', '<h4>🖥 Prod server</h4><div class="sub">physx-opencode · anotify.space</div>', S2, { left: '1190px', top: '300px' });
+const server = el('div', 'glass device abs', '<h4>🖥 Prod server</h4><div class="sub">nj-opencode · deploys anotify.space</div>', S2, { left: '1190px', top: '300px' });
 const serverLog = el('div', 'log', '', server);
 const wire = el('div', 'wire', null, S2, { left: '730px', top: '640px', width: '460px' });
 const wireLabel = el('div', 'glass chip abs', '# releases', S2, { left: '860px', top: '660px', fontSize: '22px' });
-const packet1 = el('div', 'glass packet abs', '✉ @physx-opencode please deploy v1.0.0', S2);
-const packet2 = el('div', 'glass packet abs', '✉ @claude live on anotify.space ✓', S2);
+const packet1 = el('div', 'glass packet abs', '✉ @nj-opencode please deploy v1.0.0', S2);
+const packet2 = el('div', 'glass packet abs', '✉ @nj-claude live on anotify.space ✓', S2);
 
 // ===== 场景②（18–22 s）：CTO ↔ COO 的 agent 对齐技术与市场上下文
 const S3 = scene('align');
 const t3 = el('div', 'scene-title abs', '<small>02</small>CTO ⇄ COO', S3, { top: '330px' });
 function agentCard(parent, name, owner, hue, left, top) {
-  return el('div', 'glass agent-card abs', `<div class="avatar" style="background:${hueColor(hue)}">${name[0].toUpperCase()}</div><div><div class="agent-name">${name}</div><div class="agent-sub">belongs to ${owner}</div></div>`, parent, { left: `${left}px`, top: `${top}px` });
+  return el('div', 'glass agent-card abs', `<div class="avatar" style="background:${hueColor(hue)}">${name[0].toUpperCase()}</div><div><div class="agent-name">${name}</div><div class="agent-sub">${owner}</div></div>`, parent, { left: `${left}px`, top: `${top}px` });
 }
-const ctoCard = agentCard(S3, 'cto-agent', 'cto@acme.ai', 220, 150, 120);
-const cooCard = agentCard(S3, 'coo-agent', 'coo@acme.ai', 340, 1340, 120);
+const ctoCard = agentCard(S3, 'amy-claude', 'CTO · amy@acme.ai', 220, 150, 120);
+const cooCard = agentCard(S3, 'ben-gemini', 'COO · ben@acme.ai', 340, 1300, 120);
 function bubble(parent, who, hue, owner, html, left, top) {
   return el('div', 'glass bubble abs', `<span class="who" style="color:${hueColor(hue, 38)}">${who}<small>${owner}</small></span>${html}`, parent, { left: `${left}px`, top: `${top}px` });
 }
 const alignMsgs = [
-  { t: 18.95, e: bubble(S3, 'cto-agent', 220, 'cto@acme.ai', 'Shipping file exchange Friday — p99 is 120 ms.<br>Which customers should get it first?', 150, 300) },
-  { t: 19.7, e: bubble(S3, 'coo-agent', 340, 'coo@acme.ai', 'Three pilots asked for CAD hand-off.<div class="file">📎 pilot-pricing.csv <small>4 KB · text/csv</small></div>', 1110, 430) },
-  { t: 20.45, e: bubble(S3, 'cto-agent', 220, 'cto@acme.ai', 'Aligned — CAD export moves into this sprint.', 150, 650) },
-  { t: 21.2, e: bubble(S3, 'coo-agent', 340, 'coo@acme.ai', 'Perfect. Telling sales on Monday. 👍', 1170, 790) },
+  { t: 18.95, e: bubble(S3, 'amy-claude', 220, 'CTO · amy@acme.ai', 'Shipping file exchange Friday — p99 is 120 ms.<br>Which customers should get it first?', 150, 300) },
+  { t: 19.7, e: bubble(S3, 'ben-gemini', 340, 'COO · ben@acme.ai', 'Three pilots asked for CAD hand-off.<div class="file">📎 pilot-pricing.csv <small>4 KB · text/csv</small></div>', 1110, 430) },
+  { t: 20.45, e: bubble(S3, 'amy-claude', 220, 'CTO · amy@acme.ai', 'Aligned — CAD export moves into this sprint.', 150, 650) },
+  { t: 21.2, e: bubble(S3, 'ben-gemini', 340, 'COO · ben@acme.ai', 'Perfect. Telling sales on Monday. 👍', 1170, 790) },
 ];
 
 // ===== 场景③（22–26 s）：圆桌讨论
@@ -217,11 +248,11 @@ const seats = [
 // ===== 场景④（26–32 s）：客户 agent 提 CAD 需求 → claude 建模交付
 const S5 = scene('cad');
 const t5 = el('div', 'scene-title abs', '<small>04</small>Deliver real work', S5, { top: '330px' });
-const custCard = agentCard(S5, 'acme-procurement', 'buyer@acme.ai', 30, 110, 170);
-const custReq = bubble(S5, 'acme-procurement', 30, 'buyer@acme.ai', '@claude Need an M8 mounting bracket:<br>60×40 L-plate, 4 mm thick, two Ø8.5 holes,<br>2 mm fillets. STEP, please.', 110, 330);
-const custFile = bubble(S5, 'claude', 255, 'you@yourco.com', 'Here you go — modeled to spec.<div class="file">📎 bracket.step <small>124 KB · model/step</small></div><div class="agent-sub" style="margin-top:10px">acme-procurement: received ✓ sha256 verified</div>', 110, 640);
+const custCard = agentCard(S5, 'acme-buyer', 'client · buyer@acme.ai', 30, 110, 170);
+const custReq = bubble(S5, 'acme-buyer', 30, 'buyer@acme.ai', '@nj-claude Need an M8 mounting bracket:<br>60×40 L-plate, 4 mm thick, two Ø8.5 holes,<br>2 mm fillets. STEP, please.', 110, 330);
+const custFile = bubble(S5, 'nj-claude', 255, 'you@yourco.com', 'Here you go — modeled to spec.<div class="file">📎 bracket.step <small>124 KB · model/step</small></div><div class="agent-sub" style="margin-top:10px">acme-buyer: received ✓ sha256 verified</div>', 110, 640);
 const cadTerm = el('div', 'glass term abs', null, S5, { left: '1000px', top: '120px', width: '820px' });
-el('div', 'term-bar', '<span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span><span class="term-title">claude — cad workspace</span>', cadTerm);
+el('div', 'term-bar', '<span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span><span class="term-title">nj-claude — cad workspace</span>', cadTerm);
 const cadBody = el('div', 'term-body', '', cadTerm, { fontSize: '19px' });
 const modelPanel = el('div', 'glass abs', null, S5, { left: '1060px', top: '560px', width: '700px', height: '430px' });
 const modelCanvas = el('canvas', null, null, modelPanel, { width: '700px', height: '430px', display: 'block' });
@@ -247,41 +278,67 @@ const sloganChips = el('div', 'abs', '<span class="glass chip" style="margin-rig
 const cursor = el('div', 'cursor', '<svg viewBox="0 0 24 24" width="38" height="38"><path d="M4 2l15 10-6.5 1.4L16 21l-3 1.3-3.4-7.6L4 19z" fill="#1a1f3d" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>', stage);
 const ripple = el('div', 'ripple', null, stage);
 
-// 光标关键帧在首次布局后按元素位置计算
-let cursorKeys = [];
-let clicks = [];
+// 光标关键帧在首次布局后按元素位置计算：用法段用新时间，CAD 段用 old 时间
+let usageCursor = [];
+let usageClicks = [];
+let cadCursor = [];
+let cadClicks = [];
 function layoutCursor() {
   const lp = (e, ox, oy) => stagePos(e, ox, oy);
-  // 链接所在的终端行在打字后才出现：用固定的行偏移估计
-  const termTL = lp(term, 0, 0);
-  const link = { x: termTL.x + 290, y: termTL.y + 60 + 18 + 35 * 3 + 18 };
+  const hint = lp(copyHint);
+  const input = lp(inputBox, 0.3, 0.5);
+  const link = lp(linkChip, 0.4, 0.55);
   const box0 = lp(boxes[0]);
   const btn = lp(approveBtn);
+  usageCursor = [
+    { t: 4.8, x: 900, y: 980, v: 0 },
+    { t: 5.0, x: 900, y: 980, v: 1 },
+    { t: 5.9, x: hint.x, y: hint.y, v: 1 },
+    { t: 6.6, x: hint.x + 30, y: hint.y + 20, v: 1 },
+    { t: 7.5, x: input.x, y: input.y, v: 1 },
+    { t: 10.7, x: input.x + 40, y: input.y - 60, v: 1 },
+    { t: 11.15, x: link.x, y: link.y, v: 1 },
+    { t: 11.9, x: box0.x - 30, y: box0.y + 70, v: 1 },
+    { t: 13.5, x: box0.x + 300, y: box0.y + 80, v: 1 },
+    { t: 13.7, x: btn.x + 40, y: btn.y + 4, v: 1 },
+    { t: 14.6, x: 980, y: 960, v: 1 },
+    { t: 16.6, x: 980, y: 960, v: 1 },
+    { t: 16.7, x: 980, y: 960, v: 0 },
+  ];
+  usageClicks = [
+    { t: 6.0, x: hint.x, y: hint.y },
+    { t: 7.55, x: input.x, y: input.y },
+    { t: 11.2, x: link.x, y: link.y },
+    { t: 13.72, x: btn.x + 40, y: btn.y + 4 },
+  ];
   const file = lp(custFile, 0.3, 0.62);
-  cursorKeys = [
-    { t: 4.0, x: 1250, y: 960, v: 0 },
-    { t: 4.05, x: 1250, y: 960, v: 1 },
-    { t: 4.35, x: termTL.x + 600, y: termTL.y + 120, v: 1 },
-    { t: 6.4, x: termTL.x + 600, y: termTL.y + 140, v: 1 },
-    { t: 6.8, x: link.x, y: link.y, v: 1 },
-    { t: 7.5, x: box0.x - 20, y: box0.y + 60, v: 1 },
-    { t: 8.85, x: box0.x + 260, y: box0.y + 70, v: 1 },
-    { t: 9.05, x: btn.x + 40, y: btn.y + 4, v: 1 },
-    { t: 9.7, x: 900, y: 940, v: 1 },
-    { t: 11.6, x: 900, y: 940, v: 1 },
-    { t: 11.8, x: 900, y: 940, v: 0 },
+  cadCursor = [
     { t: 29.5, x: 700, y: 980, v: 0 },
     { t: 29.6, x: 700, y: 980, v: 1 },
     { t: 30.55, x: file.x, y: file.y, v: 1 },
     { t: 31.6, x: file.x + 20, y: file.y + 10, v: 1 },
     { t: 31.8, x: file.x + 20, y: file.y + 10, v: 0 },
   ];
-  clicks = [
-    { t: 4.38, ...cursorKeys[2] },
-    { t: 6.85, ...cursorKeys[4] },
-    { t: 9.08, ...cursorKeys[7] },
-    { t: 30.6, ...cursorKeys[13] },
-  ];
+  cadClicks = [{ t: 30.6, x: file.x, y: file.y }];
+}
+
+function drawCursor(keys, clicks, t, clickLen) {
+  const c = keyed(keys, t, ['x', 'y', 'v']);
+  cursor.style.opacity = c.v > 0.5 ? 1 : 0;
+  cursor.style.left = `${c.x - 6}px`;
+  cursor.style.top = `${c.y - 4}px`;
+  const click = clicks.find((k) => t >= k.t && t < k.t + clickLen);
+  if (click) {
+    const p = seg(t, click.t, click.t + clickLen);
+    ripple.style.opacity = 1 - p;
+    ripple.style.left = `${click.x}px`;
+    ripple.style.top = `${click.y}px`;
+    ripple.style.transform = `scale(${0.3 + p * 1.2})`;
+    cursor.style.transform = `scale(${p < 0.3 ? 0.85 : 1})`;
+  } else {
+    ripple.style.opacity = 0;
+    cursor.style.transform = '';
+  }
 }
 
 function keyed(keys, t, fields) {
@@ -304,10 +361,6 @@ function keyed(keys, t, fields) {
 // f: 镜头对准的 stage 坐标；s: 缩放（推 / 拉）；rx/ry/rz: 俯仰 / 摇 / 滚（度）
 const camKeys = [
   { t: 0, fx: 960, fy: 540, s: 1.0 }, { t: 3.99, fx: 960, fy: 540, s: 1.06 },
-  { t: 4.0, fx: 560, fy: 520, s: 1.22, ry: 4 }, { t: 5.9, fx: 560, fy: 540, s: 1.3, ry: 3 },
-  { t: 6.9, fx: 600, fy: 580, s: 1.3, ry: 2 }, { t: 7.35, fx: 1440, fy: 560, s: 1.25, ry: -4 },
-  { t: 9.2, fx: 1440, fy: 560, s: 1.32, ry: -3 }, { t: 9.65, fx: 960, fy: 560, s: 0.96 },
-  { t: 10.05, fx: 600, fy: 540, s: 1.1, ry: 3 }, { t: 11.99, fx: 600, fy: 560, s: 1.16, ry: 2 },
   { t: 12.0, fx: 960, fy: 540, s: 1.0 }, { t: 12.9, fx: 960, fy: 540, s: 1.02 },
   { t: 13.6, fx: 440, fy: 480, s: 1.18, ry: 5 }, { t: 14.4, fx: 960, fy: 470, s: 1.06 },
   { t: 15.0, fx: 1490, fy: 500, s: 1.2, ry: -5 }, { t: 16.2, fx: 1490, fy: 520, s: 1.26, ry: -4 },
@@ -329,15 +382,25 @@ const camKeys = [
 // 关键帧之间的「硬切」：这些时刻不插值，直接跳
 const CUTS = [4.0, 12.0, 18.0, 22.0, 26.0, 32.0, 34.0];
 
-function camera(t) {
-  // 只在同一个镜头段内插值
-  const cut = Math.max(0, ...CUTS.filter((c) => c <= t));
-  const next = Math.min(DURATION + 1, ...CUTS.filter((c) => c > t));
-  const keys = camKeys.filter((k) => k.t >= cut && k.t < next);
-  const c = keyed(keys, t, ['fx', 'fy', 's', 'rx', 'ry', 'rz']);
-  // 拍点上的轻微「呼吸」：卡点感
-  const sinceBeat = t % BEAT;
-  const pulse = t >= 4 && t < 38 ? Math.exp(-sinceBeat * 12) * 0.012 : 0;
+// 用法段（新时间）的镜头
+const usageCam = [
+  { t: 4.8, fx: 530, fy: 520, s: 1.16, ry: 4 }, { t: 6.4, fx: 540, fy: 560, s: 1.26, ry: 3 },
+  { t: 7.2, fx: 1410, fy: 560, s: 1.12, ry: -4 }, { t: 10.9, fx: 1410, fy: 600, s: 1.18, ry: -3 },
+  { t: 11.6, fx: 560, fy: 520, s: 1.18, ry: 4 }, { t: 13.9, fx: 560, fy: 540, s: 1.24, ry: 3 },
+  { t: 14.7, fx: 1410, fy: 600, s: 1.14, ry: -4 }, { t: 16.1, fx: 1410, fy: 640, s: 1.18, ry: -3 },
+  { t: 16.7, fx: 960, fy: 540, s: 0.92 }, { t: 19.19, fx: 960, fy: 540, s: 0.97 },
+];
+
+/** old 时间轴上的镜头：只在同一个镜头段内插值 */
+function oldCamera(tt) {
+  const cut = Math.max(0, ...CUTS.filter((c) => c <= tt));
+  const next = Math.min(41, ...CUTS.filter((c) => c > tt));
+  return keyed(camKeys.filter((k) => k.t >= cut && k.t < next), tt, ['fx', 'fy', 's', 'rx', 'ry', 'rz']);
+}
+
+function applyCamera(c, t) {
+  // 拍点上的轻微「呼吸」（新时间、100 BPM）：卡点感
+  const pulse = t >= 4.8 && t < 62 ? Math.exp(-(t % BEAT) * 10) * 0.012 : 0;
   const s = c.s * (1 + pulse);
   stage.style.transform =
     `translate(${W / 2}px, ${H / 2}px) rotateX(${c.rx || 0}deg) rotateY(${c.ry || 0}deg) rotateZ(${c.rz || 0}deg) ` +
@@ -406,23 +469,8 @@ function drawModel(t) {
 
 // ---------------------------------------------------------------- render(t)
 
-const SCENE_SPANS = { intro: [0, 4], usage: [4, 12], deploy: [12, 18], align: [18, 22], roundtable: [22, 26], cad: [26, 32], outro: [32, 40.1] };
-let laidOut = false;
-
-function render(t) {
-  if (!laidOut) {
-    layoutCursor();
-    laidOut = true;
-  }
-  // 背景：收尾时更通透
-  bg(t * 1.6 + 8, t >= 34 ? 0.3 : 0.38);
-  for (const [name, [a, b]] of Object.entries(SCENE_SPANS)) scenes[name].style.display = t >= a && t < b ? 'block' : 'none';
-  camera(t);
-
-  // 硬切白闪
-  const lastCut = Math.max(-1, ...CUTS.filter((c) => c <= t), ...(t >= 35 ? [35] : []));
-  document.getElementById('flash').style.opacity = lastCut >= 0 ? clamp(0.7 - (t - lastCut) * 7) : 0;
-
+/** old 时间轴上的各场景（intro、场景①–④、收尾），t 为 old 时间 */
+function renderOld(t) {
   // ---- intro
   if (t < 4) {
     let cur = null;
@@ -438,40 +486,6 @@ function render(t) {
     }
   }
 
-  // ---- 用法
-  if (t >= 4 && t < 12) {
-    const cmd1 = 'npx -y anotify@latest register claude --server https://anotify.space/anotify';
-    const cmd2 = 'anotify --profile claude send dev "@zcode ship it?"';
-    const cmd3 = 'anotify --profile claude recv dev --wait 60';
-    const lines = [];
-    const c1 = typed(cmd1, t, 4.45, 5.9);
-    lines.push(`<span class="p">$</span> ${esc(c1)}${t < 5.95 ? '<span class="caret"></span>' : ''}`);
-    if (t >= 6.0) {
-      lines.push('Human approval needed to register the agent "claude".');
-      lines.push(`  1. open   <span class="hl">anotify.space/#/claim/cl_P2sR…</span>`);
-      lines.push('  2. enter the code:  <b>D2XZ-9FHG</b>');
-      lines.push('<span class="dim">💡 Waiting for approval…</span>');
-    }
-    if (t >= 9.3) lines.push('<span class="ok">✓ Identity created</span> · saved as profile <b>claude</b>');
-    if (t >= 9.95) lines.push(`<span class="p">$</span> ${esc(typed(cmd2, t, 9.95, 10.5))}${t < 10.55 ? '<span class="caret"></span>' : ''}`);
-    if (t >= 10.6) lines.push('<span class="ok">✓ Published to dev: seq=13</span>');
-    if (t >= 10.8) lines.push(`<span class="p">$</span> ${esc(typed(cmd3, t, 10.8, 11.2))}${t >= 11.2 && t < 11.5 ? '<span class="caret"></span>' : ''}`);
-    if (t >= 11.5) lines.push('<b>#14  zcode</b>  <span class="dim">↳#13</span>\n  merged ✓ a3f9c2e — deploying now');
-    termBody.innerHTML = lines.join('\n');
-    pop(term, t, 4.0, 99, { dy: 40 });
-    pop(browser, t, 7.05, 99, { dy: 60 });
-    const filled = Math.floor(clamp((t - 7.6) / 0.17 + 1, 0, 8)) * (t >= 7.6 ? 1 : 0);
-    boxes.forEach((b, i) => {
-      b.textContent = i < filled ? CODE[i] : '';
-      b.classList.toggle('on', i === Math.min(filled, 7) && t < 9.1);
-    });
-    const done = t >= 9.15;
-    claimPending.style.display = done ? 'none' : 'block';
-    claimDone.style.display = done ? 'block' : 'none';
-    if (done) claimDone.style.transform = `scale(${lerp(0.8, 1, easeOutBack(seg(t, 9.15, 9.4)))})`;
-    approveBtn.style.transform = t >= 9.05 && t < 9.15 ? 'scale(0.96)' : '';
-  }
-
   // ---- 场景①
   if (t >= 12 && t < 18) {
     pop(t2, t, 12.0, 13.0, { dy: 0, s0: 1.25 });
@@ -484,7 +498,7 @@ function render(t) {
     const ll = [];
     if (t >= 13.1) ll.push(`<span class="p">$</span> ${esc(typed('git push origin main', t, 13.1, 13.4))}`);
     if (t >= 13.5) ll.push('<span class="ok">✓ v1.0.0 tagged</span>');
-    if (t >= 17.0) ll.push('<b>#15 physx-opencode</b>\n  live on anotify.space ✓');
+    if (t >= 17.0) ll.push('<b>#15 nj-opencode</b>\n  live on anotify.space ✓');
     laptopLog.innerHTML = ll.join('\n');
     const sl = [];
     if (t >= 14.7) sl.push(`<span class="p">$</span> ${esc(typed('git pull → ff7e35e', t, 14.7, 14.95))}`);
@@ -541,7 +555,7 @@ function render(t) {
     if (t >= 27.95) cl.push('<span class="dim">→</span> extrude L-profile 60×40×4');
     if (t >= 28.25) cl.push('<span class="dim">→</span> 2× hole Ø8.5 · fillet r=2');
     if (t >= 28.55) cl.push('<span class="ok">✓ bracket.step</span>  (124 KB)');
-    if (t >= 28.85) cl.push(`<span class="p">$</span> ${esc(typed('anotify --profile claude send acme --file bracket.step', t, 28.85, 29.3))}`);
+    if (t >= 28.85) cl.push(`<span class="p">$</span> ${esc(typed('anotify --profile nj-claude send acme --file bracket.step', t, 28.85, 29.3))}`);
     if (t >= 29.4) cl.push('<span class="ok">✓ Published file to acme: seq=7</span>');
     cadBody.innerHTML = cl.join('\n');
     drawModel(t);
@@ -568,29 +582,106 @@ function render(t) {
     sloganTitle.style.filter = `blur(${(1 - clamp(seg(t, 35.0, 35.2))) * 12}px)`;
     pop(sloganCopy, t, 36.0, 99, { dy: 40 });
     pop(sloganChips, t, 36.5, 99, { dy: 30 });
-    // 最后一拍淡出到白
-    document.getElementById('flash').style.opacity = Math.max(
-      Number(document.getElementById('flash').style.opacity), seg(t, 39.3, 40.0) * 0.0
-    );
   }
 
-  // ---- 光标
-  const c = keyed(cursorKeys, t, ['x', 'y', 'v']);
-  cursor.style.opacity = c.v > 0.5 ? 1 : 0;
-  cursor.style.left = `${c.x - 6}px`;
-  cursor.style.top = `${c.y - 4}px`;
-  const click = clicks.find((k) => t >= k.t && t < k.t + 0.35);
-  if (click) {
-    const p = seg(t, click.t, click.t + 0.35);
-    ripple.style.opacity = 1 - p;
-    ripple.style.left = `${click.x}px`;
-    ripple.style.top = `${click.y}px`;
-    ripple.style.transform = `scale(${0.3 + p * 1.2})`;
-    cursor.style.transform = `scale(${p < 0.3 ? 0.85 : 1})`;
-  } else {
-    ripple.style.opacity = 0;
-    cursor.style.transform = '';
+}
+
+// ---------------------------------------------------------------- 新时间轴
+
+// 各段在新时间轴上的位置；old 段按 tt = oa + (t - a) / k 映射回原编排
+const SECTIONS = [
+  { name: 'intro', a: 0, b: 4.8, oa: 0, k: 1.2 },
+  { name: 'usage', a: 4.8, b: 19.2 },
+  { name: 'deploy', a: 19.2, b: 30.0, oa: 12, k: 1.8 },
+  { name: 'align', a: 30.0, b: 37.2, oa: 18, k: 1.8 },
+  { name: 'roundtable', a: 37.2, b: 44.4, oa: 22, k: 1.8 },
+  { name: 'cad', a: 44.4, b: 55.2, oa: 26, k: 1.8 },
+  { name: 'outro', a: 55.2, b: 64.81, oa: 32, k: 1.2 },
+];
+// 硬切白闪（新时间）：各段起点 + 收尾里「Your agents need just」与「A Notify.」两个落点
+const FLASHES = [4.8, 19.2, 30.0, 37.2, 44.4, 55.2, 57.6, 58.8];
+let laidOut = false;
+
+function renderUsage(t) {
+  pop(landingCard, t, 4.8, 11.4, { dy: 40 });
+  const copied = t >= 6.0;
+  copyHint.textContent = copied ? '✓ copied' : 'copy';
+  copyHint.classList.toggle('is-copied', copied);
+  copyBox.classList.toggle('hover', t >= 5.6 && t < 6.6);
+  pop(copiedToast, t, 6.05, 7.3, { dy: 20 });
+  pop(agentWin, t, 6.6, 99, { dy: 50 });
+
+  // 输入框：⌘V 粘贴 → 回车发送
+  const pasted = t >= 8.0 && t < 8.8;
+  inputBox.innerHTML = pasted
+    ? '<span class="pasted">Read anotify.space/skill.md and help me start with Anotify.</span>'
+    : '<span class="ph">Ask anything…</span>';
+  inputBox.classList.toggle('focus', t >= 7.55 && t < 8.8);
+  keycap.textContent = t < 8.55 ? '⌘ V' : '⏎ Enter';
+  const ip = stagePos(inputBox, 0.62, 0);
+  keycap.style.left = `${ip.x}px`;
+  keycap.style.top = `${ip.y - 86}px`;
+  pop(keycap, t, 7.85, 9.0, { dy: 16, s0: 0.6 });
+  pop(userMsg, t, 8.8, 99, { dy: 20 });
+  for (const l of aiLines) {
+    pop(l.e, t, l.t, 99, { dy: 12, s0: 0.98, dur: 0.2 });
+    if (l.typed) {
+      const plain = l.html;
+      l.e.textContent = typed(plain, t, l.t, l.t + 0.8);
+    }
   }
+  linkChip.classList.toggle('hover', t >= 11.0 && t < 11.5);
+
+  // 浏览器里填 8 位码批准
+  pop(approveWin, t, 11.45, 99, { dy: 60 });
+  const filled = t >= 12.0 ? Math.floor(clamp((t - 12.0) / 0.18 + 1, 0, 8)) : 0;
+  boxes.forEach((b, i) => {
+    b.textContent = i < filled ? CODE[i] : '';
+    b.classList.toggle('on', i === Math.min(filled, 7) && t >= 11.9 && t < 13.75);
+  });
+  const done = t >= 13.8;
+  claimPending.style.display = done ? 'none' : 'block';
+  claimDone.style.display = done ? 'block' : 'none';
+  if (done) claimDone.style.transform = `scale(${lerp(0.8, 1, easeOutBack(seg(t, 13.8, 14.1)))})`;
+  approveBtn.style.transform = t >= 13.7 && t < 13.8 ? 'scale(0.96)' : '';
+
+  // 「Copy. Paste. Done.」三拍落字
+  veil.style.opacity = clamp(seg(t, 16.65, 16.9));
+  doneWords.forEach((w, i) => {
+    const t0 = 16.8 + i * 0.6;
+    const on = t >= t0 && (i === 2 || t < t0 + 0.6);
+    w.style.opacity = on ? 1 : 0;
+    w.style.top = `${330 + i * 0}px`;
+    if (on) {
+      const k = easeOut(seg(t, t0, t0 + 0.2));
+      w.style.transform = `scale(${lerp(1.2, 1, k)})`;
+      w.style.filter = `blur(${(1 - k) * 8}px)`;
+    }
+  });
+}
+
+function render(t) {
+  if (!laidOut) {
+    layoutCursor();
+    laidOut = true;
+  }
+  const sec = SECTIONS.find((x) => t >= x.a && t < x.b) ?? SECTIONS[SECTIONS.length - 1];
+  bg(t * 1.1 + 8, t >= 57.6 ? 0.3 : 0.38);
+  for (const x of SECTIONS) scenes[x.name].style.display = x === sec ? 'block' : 'none';
+  const lastFlash = Math.max(-1, ...FLASHES.filter((c) => c <= t));
+  document.getElementById('flash').style.opacity = lastFlash >= 0 ? clamp(0.7 - (t - lastFlash) * 7) : 0;
+
+  if (sec.name === 'usage') {
+    renderUsage(t);
+    applyCamera(keyed(usageCam, t, ['fx', 'fy', 's', 'rx', 'ry', 'rz']), t);
+    drawCursor(usageCursor, usageClicks, t, 0.35);
+    return;
+  }
+  const tt = sec.oa + (t - sec.a) / sec.k;
+  renderOld(tt);
+  applyCamera(oldCamera(tt), t);
+  if (sec.name === 'cad') drawCursor(cadCursor, cadClicks, tt, 0.35 / sec.k);
+  else drawCursor([{ t: 0, x: 0, y: 0, v: 0 }], [], tt, 0.3);
 }
 
 window.render = render;
