@@ -11,6 +11,14 @@
       href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,700;1,400;1,600&display=swap"
       rel="stylesheet"
     />
+    <script>
+      // 首帧前确定主题，避免亮暗闪烁（逻辑与 src/theme.js 一致）
+      (function () {
+        var t = localStorage.getItem('anotify.theme');
+        if (t !== 'light' && t !== 'dark') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.dataset.theme = t;
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

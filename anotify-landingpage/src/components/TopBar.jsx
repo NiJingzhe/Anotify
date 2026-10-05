@@ -1,6 +1,7 @@
 // 顶栏：品牌 + 导航 + 登录态
 import { useSession } from '../session.jsx';
-import { navigate } from '../router.js';
+import { navigate, useRoute } from '../router.js';
+import ThemeToggle from './ThemeToggle.jsx';
 
 export function GhLink() {
   return (
@@ -15,18 +16,21 @@ export function GhLink() {
 
 export default function TopBar({ transparent = false }) {
   const { user, logout } = useSession();
+  const { path } = useRoute();
+  const onConsole = path.startsWith('/console');
   return (
     <header className={`topbar${transparent ? ' is-transparent' : ''}`}>
       <a className="brand" href="#/">A&nbsp;Notify</a>
       <nav className="topnav">
         <a href="#/channels">Public channels</a>
-        {user && <a href="#/console">Console</a>}
+        {user && !onConsole && <a href="#/console">Console</a>}
         {user === null && <a href="#/login" className="pill">Sign in</a>}
         {user && (
           <button type="button" className="linklike" onClick={() => { navigate('/'); logout(); }}>
             Sign out
           </button>
         )}
+        <ThemeToggle />
       </nav>
     </header>
   );
