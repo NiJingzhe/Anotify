@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Anotify promo</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,700;1,400;1,600;1,700&display=block"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./promo.css" />
+  </head>
+  <body>
+    <!--
+      逐帧确定的宣传片：所有画面都是 render(t) 的纯函数（t 单位秒，120 BPM → 一拍 0.5 s）。
+      浏览器里直接打开可实时预览（?t=12 跳到第 12 秒；?still=12 冻结在该时刻）；
+      render.mjs 用无头 Chrome 逐帧调用 window.render(t) 截图，再与 music.mjs 生成的配乐合成 MP4。
+    -->
+    <canvas id="bg" width="1920" height="1080"></canvas>
+    <div id="viewport">
+      <div id="stage"></div>
+    </div>
+    <div id="flash"></div>
+    <script src="./promo.js"></script>
+  </body>
+</html>
