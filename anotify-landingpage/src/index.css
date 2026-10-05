@@ -642,3 +642,4 @@ code { font-family: var(--mono); font-size: 0.9em; }
 }
 .claim-panel .auth-title { text-align: center; }
 .topnav > a, .topnav > button { white-space: nowrap; }
+.file-name.is-gone { color: var(--ink-soft); text-decoration: line-through; }

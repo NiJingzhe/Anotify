@@ -491,7 +491,7 @@ async function sendFile(cred, chName, filePath, caption, replyTo) {
 
 program
   .command('download <channel> <seq>')
-  .description('Download the file attached to file message #seq (sha256-verified; pure read, cursor untouched)')
+  .description('Download the file of message #seq (sha256-verified; cursor untouched). Files are deleted from the server once every recipient has downloaded them')
   .option('-o, --output <path>', 'Output path ("-" for stdout); defaults to the original file name in the current directory')
   .option('-f, --force', 'Overwrite an existing output file')
   .action((chName, seqArg, opts) => run(async () => {
@@ -534,9 +534,17 @@ program
       if (!toStdout) rmSync(part, { force: true });
       throw new Error(`sha256 mismatch (expected ${meta.sha256}, got ${digest}); download discarded`);
     }
+    if (!toStdout) renameSync(part, out);
+    // 收件确认：sha256 校验通过才算收到；全部收件人确认后服务端删除文件（接收即删除）
+    const receipt = await api(cred, 'POST', `/v1/channels/${ch}/files/${encodeURIComponent(meta.file_id)}/received`)
+      .catch(() => null); // ≤0.5 服务端没有该接口
     if (toStdout) return;
-    renameSync(part, out);
     console.log(`✓ Saved ${out} (${humanSize(meta.size)}, sha256 verified)`);
+    if (receipt?.deleted) {
+      console.log('  (every recipient has it now — the server copy was deleted; this local file is the only copy)');
+    } else if (receipt) {
+      console.log(`  (server copy kept until ${receipt.remaining_recipients} more recipient(s) download it, or it expires)`);
+    }
   }));
 
 program
