@@ -114,6 +114,13 @@ export function RegisterPage({ query }) {
   if (sentTo) {
     return (
       <AuthShell title="Check your inbox" subtitle={`We sent a verification link to ${sentTo}.`}>
+        <div className="spam-note" role="note">
+          <span className="spam-emoji" aria-hidden="true">🕵️</span>
+          <span>
+            <b>Not there within a minute or two?</b> Our email is probably hiding in your <b>spam folder</b> —
+            it does that sometimes. Go rescue it and mark us “not spam”, or we may never find our way home. 📬
+          </span>
+        </div>
         <p className="muted">Open the link in that email to activate your account — you will be signed in automatically. The link is valid for 24 hours.</p>
         <ResendButton email={sentTo} />
         <p className="auth-alt"><a href="#/login">Back to sign in</a></p>

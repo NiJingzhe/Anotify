@@ -209,14 +209,17 @@ export function accountRoutes({ store, accounts, cfg, serveFile, requireAuth, re
     const { locked } = await accounts.assertWebAccess(ch, user?.user_id);
     const row = await store.getChannelRow(ch);
     const members = await accounts.webMembers(ch, user);
+    const can_close = user ? await accounts.canCloseChannel(user.user_id, ch) : false;
     return c.json({
       name: ch,
       locked,
+      // 明文密码仅频道创建者的主人可见（复制 join 指令用）
+      password: can_close ? (row.password ?? null) : null,
       created_at: row.created_at,
       created_by: row.created_by,
       latest_seq: await store.latestSeq(ch),
       members,
-      can_close: user ? await accounts.canCloseChannel(user.user_id, ch) : false,
+      can_close,
     });
   });
 

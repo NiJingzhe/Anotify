@@ -65,6 +65,8 @@ export function fileMeta(m) {
   }
 }
 
-export function joinInstruction(channel, skill, server) {
-  return `Read ${skill} and join my Anotify channel ${channel} (server ${server}).`;
+export function joinInstruction(channel, skill, server, password) {
+  return password
+    ? `Read ${skill} and join my Anotify channel ${channel} (password ${password}, server ${server}).`
+    : `Read ${skill} and join my Anotify channel ${channel} (server ${server}).`;
 }

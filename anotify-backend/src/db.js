@@ -198,6 +198,12 @@ export const MIGRATIONS = [
 
   CREATE UNIQUE INDEX idx_agents_name_global ON agents (lower(display_name)) WHERE deleted_at IS NULL;
   `,
+
+  // v7：频道密码明文存储（用户决策：频道密码是共享秘密，owner 需要能复制完整 join 指令；
+  // 人类账号密码仍为哈希）。明文列可空；为空的遗留频道继续走 password_hash 校验。
+  `
+  ALTER TABLE channels ADD COLUMN IF NOT EXISTS password TEXT;
+  `,
 ];
 
 /** upTo：只迁移到指定版本（测试存量数据迁移用） */
@@ -460,16 +466,17 @@ export async function createStore(databaseUrl) {
   }
 
   async function getChannelRow(name) {
-    return one('SELECT name, created_by, password_hash, created_at FROM channels WHERE name = $1', [name]);
+    return one('SELECT name, created_by, password_hash, password, created_at FROM channels WHERE name = $1', [name]);
   }
 
   async function createChannel(name, createdBy, password) {
     const ts = now();
+    // 密码明文存储（共享秘密，owner 需要在 Console 复制完整 join 指令）；hash 仅为遗留兼容保留
     const password_hash = password ? sha256(password) : null;
     const r = await q(
-      `INSERT INTO channels (name, created_by, password_hash, created_at) VALUES ($1, $2, $3, $4)
+      `INSERT INTO channels (name, created_by, password_hash, password, created_at) VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (name) DO NOTHING`,
-      [name, createdBy, password_hash, ts]
+      [name, createdBy, password_hash, password ?? null, ts]
     );
     if (!r.rowCount) {
       throw new HttpError(409, 'channel_exists', `channel "${name}" already exists`);
@@ -485,17 +492,27 @@ export async function createStore(databaseUrl) {
       throw new HttpError(403, 'not_owner', `only the channel owner can change its password`);
     }
     const hash = password ? sha256(password) : null;
-    await q('UPDATE channels SET password_hash = $1 WHERE name = $2', [hash, name]);
+    await q('UPDATE channels SET password_hash = $1, password = $2 WHERE name = $3', [hash, password ?? null, name]);
     return { channel: name, locked: !!hash };
   }
 
   /** join / 发言的门禁：上锁频道必须验密后由路由显式入册（公开频道自动入册） */
   async function assertJoinAllowed(channel, password) {
     const row = await getChannelRow(channel);
-    if (!row?.password_hash) return; // 公开频道不设防
+    if (!row?.password_hash && row?.password == null) return; // 公开频道不设防
     if (password === undefined || password === null || password === '') {
       throw new HttpError(403, 'password_required', `channel "${channel}" is locked; a password is required to join`);
     }
+    if (row.password != null) {
+      // 明文路径（v1.2+）：共享秘密直接比对
+      const expected = Buffer.from(row.password, 'utf8');
+      const given = Buffer.from(password, 'utf8');
+      if (expected.length !== given.length || !timingSafeEqual(expected, given)) {
+        throw new HttpError(403, 'wrong_password', `wrong password for channel "${channel}"`);
+      }
+      return;
+    }
+    // 遗留路径：老频道只有 hash
     const expected = Buffer.from(row.password_hash, 'hex');
     const given = Buffer.from(sha256(password), 'hex');
     if (expected.length !== given.length || !timingSafeEqual(expected, given)) {
