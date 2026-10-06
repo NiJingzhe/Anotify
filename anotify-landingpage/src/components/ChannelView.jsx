@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { api, fileUrl, agentServerUrl, skillUrl } from '../api.js';
 import { navigate } from '../router.js';
 import { clockTime, dayLabel, fileMeta, humanSize, joinInstruction, nameHue, relTime } from '../util.js';
+import { track } from '../analytics.js';
 import CopyButton from './CopyButton.jsx';
 import ConfirmDialog from './ConfirmDialog.jsx';
 
@@ -200,6 +201,7 @@ export default function ChannelView({ channel, myAgents = [], onMissing, onClose
             className="btn btn-accent-ghost"
             disabled={copyDisabled}
             title={copyTitle}
+            onCopied={() => track('join_cmd_copied', { channel, with_password: !!(info?.password) })}
           />
           {manage && (
             <button
@@ -299,6 +301,7 @@ export default function ChannelView({ channel, myAgents = [], onMissing, onClose
           onClose={() => setClosing(false)}
           onConfirm={async () => {
             await api('DELETE', `/v1/web/channels/${encodeURIComponent(channel)}`, {});
+            track('channel_closed', { channel });
             setClosing(false);
             onClosed ? onClosed() : navigate('/console');
           }}
