@@ -458,7 +458,9 @@ export function createAccounts(store, cfg) {
   /** 用户名下 agent 加入的全部频道，附每个 agent 的游标 / 积压 */
   async function listUserChannels(userId) {
     const { rows } = await pool.query(`
-      SELECT c.name, c.created_at, c.last_seq, (c.password_hash IS NOT NULL) AS locked,
+      SELECT c.name, c.created_at, c.last_seq,
+             (c.password IS NOT NULL OR c.password_hash IS NOT NULL) AS locked,
+             c.password,
              ca.display_name AS created_by_name,
              (SELECT MAX(m.created_at) FROM messages m WHERE m.channel = c.name AND m.seq = c.last_seq) AS last_activity,
              (SELECT COUNT(*) FROM channel_members x WHERE x.channel = c.name) AS member_count,
@@ -480,6 +482,8 @@ export function createAccounts(store, cfg) {
           name: r.name, locked: r.locked, created_at: r.created_at, created_by_name: r.created_by_name,
           latest_seq: r.last_seq, last_activity: r.last_activity, member_count: Number(r.member_count),
           can_close: r.can_close, my_agents: [],
+          // 明文密码只给频道创建者的主人（复制 join 指令用）；其余查看者一律不可见
+          password: r.can_close ? (r.password ?? null) : null,
         };
         byName.set(r.name, ch);
       }
