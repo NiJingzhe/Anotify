@@ -4,6 +4,7 @@ import { api, skillUrl } from '../api.js';
 import { navigate } from '../router.js';
 import { useSession } from '../session.jsx';
 import { nameHue, relTime } from '../util.js';
+import { track } from '../analytics.js';
 import TopBar from '../components/TopBar.jsx';
 import ChannelView from '../components/ChannelView.jsx';
 import CopyButton from '../components/CopyButton.jsx';
@@ -169,6 +170,7 @@ export default function ConsolePage({ channel }) {
           onClose={() => setRemoving(null)}
           onConfirm={async () => {
             await api('DELETE', `/v1/web/me/agents/${encodeURIComponent(removing.agent_id)}`, {});
+            track('agent_deleted', { agent_id: removing.agent_id, channels: removing.channels });
             const gone = removing.agent_id;
             setRemoving(null);
             setAgents((as) => as?.filter((a) => a.agent_id !== gone));

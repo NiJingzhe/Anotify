@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { navigate, rememberNext, takeNext } from '../router.js';
 import { useSession } from '../session.jsx';
+import { track, identifyUser } from '../analytics.js';
 import TopBar from '../components/TopBar.jsx';
 
 function AuthShell({ title, subtitle, children }) {
@@ -79,6 +80,7 @@ export function LoginPage({ query }) {
           setError(null);
           try {
             setUser(await api('POST', '/v1/auth/login', { email, password }));
+            track('login_success');
             navigate(takeNext(), { replace: true });
           } catch (err) {
             setError(err);
@@ -146,6 +148,7 @@ export function RegisterPage({ query }) {
           setError(null);
           try {
             const r = await api('POST', '/v1/auth/register', { email, password, invite_code: invite.trim() || undefined });
+            track('signup_email_sent', { with_invite: !!invite.trim() });
             setSentTo(r.email);
           } catch (err) {
             setError(err);
@@ -190,6 +193,8 @@ export function VerifyPage({ query }) {
     started.current = true;
     api('POST', '/v1/auth/verify', { token: query.token ?? '' })
       .then((u) => {
+        track('signup_verified');
+        identifyUser(u.user_id ?? u.id, { email: u.email });
         setUser(u);
         navigate(takeNext(), { replace: true });
       })

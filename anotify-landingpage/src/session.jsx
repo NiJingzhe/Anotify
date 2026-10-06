@@ -1,6 +1,7 @@
 // 登录态：/v1/auth/me 判定；用户有交互时按节流发送活动心跳，会话滑动续期（无活动 14 天过期）
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
+import { identifyUser, resetAnalytics } from './analytics.js';
 
 const SessionContext = createContext(null);
 
@@ -55,6 +56,12 @@ export function SessionProvider({ children }) {
     await api('POST', '/v1/auth/logout', {}).catch(() => {});
     setUser(null);
   }, []);
+
+  // PostHog：登录即 identify（留存/动线按用户聚合）；登出即 reset 防串号
+  useEffect(() => {
+    if (user) identifyUser(user.user_id ?? user.id, { email: user.email });
+    else if (user === null) resetAnalytics();
+  }, [user]);
 
   return (
     <SessionContext.Provider value={{ user, setUser, refresh, logout }}>
