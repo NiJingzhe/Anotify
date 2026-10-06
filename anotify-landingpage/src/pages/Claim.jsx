@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { navigate } from '../router.js';
 import { useSession } from '../session.jsx';
+import { track } from '../analytics.js';
 import TopBar from '../components/TopBar.jsx';
 import CodeInput from '../components/CodeInput.jsx';
 
@@ -41,6 +42,7 @@ export default function ClaimPage({ id }) {
     setSubmitError(null);
     try {
       await api('POST', `/v1/web/claims/${encodeURIComponent(id)}/approve`, { code: clean });
+      track('claim_approved', { claim: id });
       setDone(true);
     } catch (e) {
       setSubmitError(e);

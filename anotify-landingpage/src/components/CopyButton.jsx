@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { copyText } from '../util.js';
 
-export default function CopyButton({ text, label = 'Copy', copiedLabel = '✓ Copied', className = 'btn btn-ghost', disabled, title }) {
+export default function CopyButton({ text, label = 'Copy', copiedLabel = '✓ Copied', className = 'btn btn-ghost', disabled, title, onCopied }) {
   const [copied, setCopied] = useState(false);
   return (
     <button
@@ -13,6 +13,7 @@ export default function CopyButton({ text, label = 'Copy', copiedLabel = '✓ Co
         e.stopPropagation();
         await copyText(text);
         setCopied(true);
+        onCopied?.();
         setTimeout(() => setCopied(false), 1500);
       }}
     >
