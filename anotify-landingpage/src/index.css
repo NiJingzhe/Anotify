@@ -1008,3 +1008,25 @@ html.overlay-open { overflow: hidden; }
   .code-input { gap: 0.22rem; }
   .code-cell { width: clamp(1.6rem, 8vw, 2.15rem); }
 }
+
+/* ---------- 注册后「查垃圾邮件」提醒（醒目 + 风趣） ---------- */
+
+.spam-note {
+  display: flex;
+  gap: 0.7rem;
+  align-items: flex-start;
+  text-align: left;
+  padding: 0.8rem 1rem;
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--ok);
+  border-radius: 12px;
+  background: rgb(var(--paper-rgb));
+  color: var(--ink);
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.spam-note .spam-emoji {
+  font-size: 1.3rem;
+  flex-shrink: 0;
+}

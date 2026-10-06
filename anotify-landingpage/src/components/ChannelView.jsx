@@ -169,7 +169,13 @@ export default function ChannelView({ channel, myAgents = [], onMissing, onClose
     return <div className="channel-view"><div className="empty-state"><p>{msg}</p></div></div>;
   }
 
-  const instruction = joinInstruction(channel, skillUrl(), agentServerUrl());
+  const instruction = joinInstruction(channel, skillUrl(), agentServerUrl(), info?.password);
+  const copyDisabled = !info || (info.locked && !(info.can_close && info.password));
+  const copyTitle = !info ? 'Loading…'
+    : info.locked && info.can_close && info.password ? 'Copy a one-line join instruction — includes the channel password'
+    : info.locked && info.can_close ? 'Legacy hashed password: reset it once (anotify channel passwd) to make it copyable'
+    : info.locked ? 'Locked channel: ask the channel owner for its password'
+    : 'Copy a one-line instruction that makes your agent join this channel';
   let lastDay = null;
 
   return (
@@ -192,10 +198,8 @@ export default function ChannelView({ channel, myAgents = [], onMissing, onClose
             text={instruction}
             label="Copy join cmd for agent"
             className="btn btn-accent-ghost"
-            disabled={!info || info.locked}
-            title={info?.locked
-              ? 'Locked channel: give your agent its password yourself'
-              : 'Copy a one-line instruction that makes your agent join this channel'}
+            disabled={copyDisabled}
+            title={copyTitle}
           />
           {manage && (
             <button
