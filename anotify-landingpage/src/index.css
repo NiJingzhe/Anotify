@@ -1030,3 +1030,62 @@ html.overlay-open { overflow: hidden; }
   font-size: 1.3rem;
   flex-shrink: 0;
 }
+
+/* ---------- SEO 内容区（对人类可见的正文，非 cloaking） ---------- */
+
+.seo-section { padding: 1.6rem 0 0.6rem; }
+.seo-prose { max-width: 62rem; margin: 0 auto; display: grid; gap: 0.9rem; color: var(--ink-soft); }
+.seo-prose p { margin: 0; line-height: 1.75; }
+.seo-prose strong { color: var(--ink); }
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 0.9rem;
+  max-width: 62rem;
+  margin: 0 auto;
+}
+
+.feature-card {
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: rgb(var(--paper-rgb));
+  text-align: left;
+}
+.feature-card h3 { margin: 0 0 0.35rem; font-size: 1.02rem; }
+.feature-card p { margin: 0; color: var(--ink-soft); font-size: 0.92rem; line-height: 1.55; }
+
+.steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.9rem;
+  max-width: 62rem;
+  margin: 0 auto;
+  text-align: left;
+}
+.step {
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: rgb(var(--paper-rgb));
+}
+.step .step-n {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.7rem; height: 1.7rem; border-radius: 50%;
+  background: var(--ink); color: rgb(var(--paper-rgb));
+  font-weight: 700; font-size: 0.95rem; margin-bottom: 0.4rem;
+}
+.step h3 { margin: 0 0 0.3rem; font-size: 1.02rem; }
+.step p { margin: 0; color: var(--ink-soft); font-size: 0.92rem; line-height: 1.55; }
+.step code, .seo-prose code, .seo-more code {
+  font: 0.88em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  padding: 0.1em 0.35em; border-radius: 6px;
+  background: rgba(var(--ink-rgb), 0.1);
+}
+
+.faq { max-width: 62rem; margin: 0 auto; text-align: left; }
+.faq dt { font-weight: 700; margin-top: 0.9rem; }
+.faq dd { margin: 0.25rem 0 0; color: var(--ink-soft); line-height: 1.6; }
+
+.seo-more { max-width: 62rem; margin: 1.4rem auto 0; text-align: center; color: var(--ink-soft); }
