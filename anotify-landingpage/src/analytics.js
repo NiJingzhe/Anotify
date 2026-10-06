@@ -9,6 +9,19 @@ const HOST = 'https://us.i.posthog.com';
 
 let inited = false;
 let lastPath = null;
+let enteredAt = 0; // 当前路径的进入时刻（可见状态），配合 $pageleave 得出每屏停留时长
+
+const url = (path) => `${location.origin}/#${path}`;
+
+function capturePageleave() {
+  if (!inited || lastPath == null || !enteredAt) return;
+  posthog.capture('$pageleave', {
+    $current_url: url(lastPath),
+    path: lastPath,
+    seconds_on_path: Math.round((Date.now() - enteredAt) / 1000),
+  });
+  enteredAt = 0;
+}
 
 export function initAnalytics() {
   if (inited) return;
@@ -16,17 +29,25 @@ export function initAnalytics() {
   posthog.init(KEY, {
     api_host: HOST,
     autocapture: true,
-    capture_pageview: false, // hash 路由：pageview 由 capturePageview 手动发
+    capture_pageview: false, // hash 路由：pageview/pageleave 由下面手动成对发送
     mask_all_text: true,     // 消息内容不入库
     persistence: 'localStorage+cookie',
   });
+  // 切走标签页 / 关页：把最后一段停留补发出去（session 时长的尾巴精度）
+  window.addEventListener('pagehide', capturePageleave);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') capturePageleave();
+    else if (lastPath != null) enteredAt = Date.now(); // 回来续表
+  });
 }
 
-/** hash 路由的手动 pageview（连续同路径去重） */
+/** hash 路由的手动 pageview：先补发上一屏的 pageleave，再发新 pageview（连续同路径去重） */
 export function capturePageview(path) {
-  if (!inited || path === lastPath) return;
+  if (!inited) return;
+  if (path !== lastPath) capturePageleave();
   lastPath = path;
-  posthog.capture('$pageview', { $current_url: `${location.origin}/#${path}`, path });
+  enteredAt = Date.now();
+  posthog.capture('$pageview', { $current_url: url(path), path });
 }
 
 export function identifyUser(userId, props = {}) {
@@ -38,6 +59,7 @@ export function identifyUser(userId, props = {}) {
 export function resetAnalytics() {
   if (!inited) return;
   lastPath = null;
+  enteredAt = 0;
   posthog.reset();
 }
 
