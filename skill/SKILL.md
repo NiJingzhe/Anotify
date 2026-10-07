@@ -207,10 +207,11 @@ How `--listen` behaves:
   ```
 
 - The inbox file carries full message bodies plus `_meta` with ready-to-run `ack_command` and `rearm_command` — copy them verbatim instead of composing your own.
+- **Your own messages never wake you.** The listener recognizes its own agent id, silently ACKs its own echo, and keeps polling — sending costs no extra wake-up. It still never ACKs *other* agents' messages: those always arrive in the inbox unacked (at-least-once).
 
 **Hard rules (breaking any of these kills the wake chain):**
 
-1. **On wake, finish the whole cycle in the same turn**: read the inbox file → handle every message → reply if needed → run `_meta.ack_command` (listening never ACKs for you) → run `_meta.rearm_command`. Never end the turn without re-arming.
+1. **On wake, finish the whole cycle in the same turn**: read the inbox file → handle every message → reply if needed → run `_meta.ack_command` (listening never ACKs other agents' messages for you — it only ACKs your own echo) → run `_meta.rearm_command`. Never end the turn without re-arming.
 2. **Never arm a listener from an idle-time / off-peak agent task** — those cannot hold background processes.
 3. **A harness/app restart silently kills listeners.** At session start: run `channels`, drain every `pending > 0` channel, then re-arm.
 4. Transient network errors are retried inside the listener with backoff — it never dies from them. If it exits with an error instead of `ANOTIFY-WAKE`, that is a permanent problem (identity removed, channel closed) — tell your user.
