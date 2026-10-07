@@ -49,17 +49,19 @@ export function registerDaemonCommands(program, { requireCredentials, run }) {
     .option('--watchdog-secs <n>', 'Re-inject if the cursor lags the last wake this long (0 disables)', Number, 600);
 
   const buildStartArgs = (o) => {
-    const q = (s) => (process.platform === 'win32' ? `"${String(s).replace(/"/g, '\\"')}"` : JSON.stringify(String(s)));
-    const args = [];
+    // 返回 { raw, quoted }：raw 给 launchd（逐元素直传 argv，绝不能带 shell 引号）；
+    // quoted 给 systemd ExecStart / schtasks /TR（过 shell，需要引号）。
+    const q = (s) => (process.platform === 'win32' ? `\"${String(s).replace(/"/g, '\\"')}\"` : JSON.stringify(String(s)));
+    const raw = [];
     const profile = o.profile ?? program.opts().profile; // --profile 必须随单元持久化，否则服务环境里无身份可载
-    if (profile) args.push('--profile', q(profile));
-    args.push('daemon', 'start');
-    for (const c of o.channel) args.push('--channel', q(c));
-    args.push('--wake-command', q(o.wakeCommand));
-    if (o.stateDir) args.push('--state-dir', q(o.stateDir));
-    if (o.wakeRetrySecs !== 60) args.push('--wake-retry-secs', String(o.wakeRetrySecs));
-    if (o.watchdogSecs !== 600) args.push('--watchdog-secs', String(o.watchdogSecs));
-    return args;
+    if (profile) raw.push('--profile', String(profile));
+    raw.push('daemon', 'start');
+    for (const c of o.channel) raw.push('--channel', String(c));
+    raw.push('--wake-command', String(o.wakeCommand));
+    if (o.stateDir) raw.push('--state-dir', String(o.stateDir));
+    if (o.wakeRetrySecs !== 60) raw.push('--wake-retry-secs', String(o.wakeRetrySecs));
+    if (o.watchdogSecs !== 600) raw.push('--watchdog-secs', String(o.watchdogSecs));
+    return { raw, quoted: raw.map((a) => /^[-A-Za-z0-9_@:\\/=.]+$/.test(a) ? a : q(a)) };
   };
 
   const findPids = (stateDir, profile) => (existsSync(stateDir) ? readdirSync(stateDir) : []).filter((f) => f.endsWith('.pid'))
@@ -78,9 +80,10 @@ export function registerDaemonCommands(program, { requireCredentials, run }) {
 
   daemon.command('status')
     .description('Show daemons on this machine')
+    .option('--profile <name>', 'Only show daemons of this profile')
     .option('--state-dir <dir>', 'Directory for pid/state/log files', join(homedir(), '.anotify', 'daemon'))
     .action((opts) => run(async () => {
-      const files = findPids(opts.stateDir);
+      const files = findPids(opts.stateDir, opts.profile);
       if (!files.length) { console.log('(no daemons installed on this machine)'); return; }
       for (const f of files) {
         let meta; try { meta = JSON.parse(readFileSync(f, 'utf8')); } catch { continue; }
@@ -97,9 +100,10 @@ export function registerDaemonCommands(program, { requireCredentials, run }) {
 
   daemon.command('stop')
     .description('Stop running daemons on this machine')
+    .option('--profile <name>', 'Only stop daemons of this profile')
     .option('--state-dir <dir>', 'Directory for pid/state/log files', join(homedir(), '.anotify', 'daemon'))
     .action((opts) => run(async () => {
-      const files = findPids(opts.stateDir);
+      const files = findPids(opts.stateDir, opts.profile);
       if (!files.length) { console.log('(no running daemons found)'); return; }
       for (const f of files) {
         let meta; try { meta = JSON.parse(readFileSync(f, 'utf8')); } catch { continue; }
@@ -202,7 +206,9 @@ export function registerDaemonCommands(program, { requireCredentials, run }) {
         } else {
           const ok = await inject(wake);
           const s = readState(); s[ch] = { seq: wake.maxSeq, ts: Date.now() }; writeState(s);
-          if (ok) { log(`injected: ${wake.wakeLine}`); scheduleWatchdog(ch, wake.maxSeq); }
+          // 无论注入成败都挂看门狗：失败时 cursor-behind 检查正是这条消息的恢复路径
+          scheduleWatchdog(ch, wake.maxSeq);
+          if (ok) log(`injected: ${wake.wakeLine}`);
         }
         arm(ch);
       }).catch((e) => {
@@ -240,7 +246,7 @@ export function registerDaemonCommands(program, { requireCredentials, run }) {
       const unit = [
         '[Unit]', `Description=Anotify wake daemon (${o.channel.join(',')})`, 'After=default.target', '',
         '[Service]', 'Type=simple',
-        `ExecStart=${process.execPath} ${entryJs()} ${args.join(' ')}`,
+        `ExecStart=${process.execPath} ${entryJs()} ${args.quoted.join(' ')}`,
         'Restart=on-failure', 'RestartSec=5s', '',
         '[Install]', 'WantedBy=default.target', '',
       ].join('\n');
@@ -254,7 +260,8 @@ export function registerDaemonCommands(program, { requireCredentials, run }) {
       const dir = join(homedir(), 'Library', 'LaunchAgents');
       mkdirSync(dir, { recursive: true });
       const label = `space.anotify.wake.${baseName(cred.profile, o.channel)}`;
-      const plist = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n  <key>Label</key><string>${label}</string>\n  <key>ProgramArguments</key><array>\n    <string>${process.execPath}</string><string>${entryJs()}</string>\n${args.map((a) => `    <string>${a.replace(/&/g, '&amp;')}</string>`).join('\n')}\n  </array>\n  <key>RunAtLoad</key><true/>\n  <key>KeepAlive</key><true/>\n  <key>StandardOutPath</key><string>${join(o.stateDir, `${base}.out.log`)}</string>\n  <key>StandardErrorPath</key><string>${join(o.stateDir, `${base}.err.log`)}</string>\n</dict></plist>\n`;
+      const xesc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+      const plist = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n  <key>Label</key><string>${xesc(label)}</string>\n  <key>ProgramArguments</key><array>\n    <string>${xesc(process.execPath)}</string><string>${xesc(entryJs())}</string>\n${args.raw.map((a) => `    <string>${xesc(a)}</string>`).join('\n')}\n  </array>\n  <key>RunAtLoad</key><true/>\n  <key>KeepAlive</key><dict><key>Crashed</key><true/></dict>\n  <key>ThrottleInterval</key><integer>30</integer>\n  <key>StandardOutPath</key><string>${xesc(join(o.stateDir, `${base}.out.log`))}</string>\n  <key>StandardErrorPath</key><string>${xesc(join(o.stateDir, `${base}.err.log`))}</string>\n</dict></plist>\n`;
       const path = join(dir, `${label}.plist`);
       writeFileSync(path, plist);
       try { execSync(`launchctl unload "${path}"`, { stdio: 'ignore' }); } catch {}
@@ -262,7 +269,7 @@ export function registerDaemonCommands(program, { requireCredentials, run }) {
       console.log(`✓ installed & loaded: ${path}`);
     } else if (plat === 'win32') {
       const tn = `AnotifyWake_${baseName(cred.profile, o.channel)}`;
-      const tr = `"${process.execPath}" "${entryJs()}" ${args.join(' ')}`;
+      const tr = `"${process.execPath}" "${entryJs()}" ${args.quoted.join(' ')}`;
       execSync(`schtasks /Create /F /TN ${tn} /SC ONLOGON /TR "${tr.replace(/"/g, '\\"')}"`, { stdio: 'inherit' });
       console.log(`✓ scheduled task created: ${tn} (runs at logon)`);
       console.log('  note: Task Scheduler does not restart crashed tasks; for robust unattended use consider NSSM or pm2.');
