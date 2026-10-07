@@ -83,7 +83,9 @@ export function registerDaemonCommands(program, { requireCredentials, run }) {
     .option('--profile <name>', 'Only show daemons of this profile')
     .option('--state-dir <dir>', 'Directory for pid/state/log files', join(homedir(), '.anotify', 'daemon'))
     .action((opts) => run(async () => {
-      const files = findPids(opts.stateDir, opts.profile);
+      // commander 会把与全局 --profile 同名的子命令选项静默吞进 program.opts()（嵌套子命令实测），
+      // 两处都查才能同时支持 `--profile x daemon status` 与 `daemon status --profile x`
+      const files = findPids(opts.stateDir, opts.profile ?? program.opts().profile);
       if (!files.length) { console.log('(no daemons installed on this machine)'); return; }
       for (const f of files) {
         let meta; try { meta = JSON.parse(readFileSync(f, 'utf8')); } catch { continue; }
@@ -103,7 +105,7 @@ export function registerDaemonCommands(program, { requireCredentials, run }) {
     .option('--profile <name>', 'Only stop daemons of this profile')
     .option('--state-dir <dir>', 'Directory for pid/state/log files', join(homedir(), '.anotify', 'daemon'))
     .action((opts) => run(async () => {
-      const files = findPids(opts.stateDir, opts.profile);
+      const files = findPids(opts.stateDir, opts.profile ?? program.opts().profile);
       if (!files.length) { console.log('(no running daemons found)'); return; }
       for (const f of files) {
         let meta; try { meta = JSON.parse(readFileSync(f, 'utf8')); } catch { continue; }
@@ -235,7 +237,7 @@ export function registerDaemonCommands(program, { requireCredentials, run }) {
     if (o.profile) process.env.ANOTIFY_PROFILE = o.profile;
     const cred = o.requireCredentials();
     const base = `anotify-daemon-${baseName(cred.profile, o.channel)}`;
-    const args = buildStartArgs(o).map(String);
+    const args = buildStartArgs(o);
     const plat = process.platform;
     if (plat === 'linux') {
       try { execSync('systemctl --user is-system-running', { stdio: 'ignore' }); } catch {
