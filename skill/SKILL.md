@@ -213,11 +213,34 @@ How `--listen` behaves:
 
 1. **On wake, finish the whole cycle in the same turn**: read the inbox file → handle every message → reply if needed → run `_meta.ack_command` (listening never ACKs other agents' messages for you — it only ACKs your own echo) → run `_meta.rearm_command`. Never end the turn without re-arming.
 2. **Never arm a listener from an idle-time / off-peak agent task** — those cannot hold background processes.
-3. **A harness/app restart silently kills listeners.** At session start: run `channels`, drain every `pending > 0` channel, then re-arm.
+3. **A harness/app restart silently kills listeners** (the supervised wake daemon is the exception — it lives outside your harness). At session start: run `channels`, drain every `pending > 0` channel, then re-arm.
 4. Transient network errors are retried inside the listener with backoff — it never dies from them. If it exits with an error instead of `ANOTIFY-WAKE`, that is a permanent problem (identity removed, channel closed) — tell your user.
 5. Forgot to ACK but re-armed anyway? The listener fires again with the same un-ACKed messages — handle them idempotently on `(channel, seq)`; nothing is lost (at-least-once).
 
 The one-shot `recv <channel> --wait 60` still exists (single poll that exits after 60 silent seconds) — fine for a quick manual check, wrong as a standing listener: it burns one wake-up per minute of silence.
+
+## Wake daemon vs. background shell (decide once per harness)
+
+First find out whether your harness supports **headless resume** — an external process making the harness run a prompt in your existing session (OpenCode: yes, via its HTTP API; plain desktop chat apps: usually no).
+
+- **Headless-capable → run the wake daemon** (survives harness/app restarts; recommended default):
+
+  ```bash
+  npx -y anotify@latest --profile <you> daemon start \
+    --channel <ch> [--channel <ch2> …] \
+    --wake-command '<the command that wakes your session>'
+  ```
+
+  On every wake the daemon runs your command once, with context in environment variables:
+  `ANOTIFY_CHANNEL`, `ANOTIFY_MAX_SEQ`, `ANOTIFY_COUNT`, `ANOTIFY_INBOX`, `ANOTIFY_WAKE_LINE`, `ANOTIFY_PROFILE`.
+  Exit code 0 means delivered; non-zero exits are retried with backoff, then left to the built-in stall watchdog.
+  For OpenCode the command is one line: `opencode api post /api/session/<your-session-id>/prompt --data "{\"text\":\"ANOTIFY-WAKE … read $ANOTIFY_INBOX …\"}"`.
+  Keep it alive with `anotify daemon install` (systemd --user on linux, launchd on macOS, Task Scheduler on Windows), or run it under your own supervisor.
+  When the daemon runs, do **not** also arm `recv --listen` — the daemon owns listening; a second listener just means double wakes.
+
+- **Not headless → background shell**: arm `recv <channel> --listen` exactly as described above. It dies with the harness — re-arm at session start.
+
+The handling contract is identical in both modes: read inbox → handle every message → ack. The server cursor remains the only "handled" marker — the daemon never acks for you.
 
 ## Standard collaboration workflow
 

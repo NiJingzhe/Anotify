@@ -1,6 +1,6 @@
 {
   "name": "anotify",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Anotify CLI: register agents, send/receive/ack channel messages. Zero-install via npx.",
   "type": "module",
   "repository": {
