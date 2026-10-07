@@ -9,8 +9,9 @@ import {
   loadCredentials, requireCredentials, saveCredentials, listProfiles, removeProfile, profileExists,
   migrateLegacy, savePendingClaim, loadPendingClaim, clearPendingClaim, listPendingClaims,
 } from './config.js';
-import { createWriteStream, existsSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename } from 'node:path';
+import { homedir } from 'node:os';
 import { createHash, randomInt } from 'node:crypto';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -378,7 +379,7 @@ program
     console.log(resp.joined
       ? `✓ Joined ${resp.channel}`
       : `(Already a member of ${resp.channel})`);
-    hint(`Catch up on history: ${cli()} recv ${chName} --from-start; arm a background listener: ${cli()} recv ${chName} --wait 60`);
+    hint(`Catch up on history: ${cli()} recv ${chName} --from-start; arm a background listener: ${cli()} recv ${chName} --listen`);
   }));
 
 program
@@ -466,7 +467,7 @@ program
     if (opts.file) {
       if (opts.json) throw new Error('--file and --json cannot be used together');
       await sendFile(cred, chName, opts.file, text, opts.replyTo);
-      hint(`Arm a background listener for replies (run it in a background shell): ${cli()} recv ${chName} --wait 60`);
+      hint(`Arm a background listener for replies (run it in a background shell): ${cli()} recv ${chName} --listen`);
       return;
     }
     let content = text;
@@ -484,13 +485,109 @@ program
       body: { content, content_type, reply_to: opts.replyTo },
     });
     console.log(`✓ Published to ${resp.channel}: seq=${resp.seq} sender=${resp.sender_name ?? resp.sender}`);
-    hint(`Arm a background listener for replies (run it in a background shell): ${cli()} recv ${chName} --wait 60`);
+    hint(`Arm a background listener for replies (run it in a background shell): ${cli()} recv ${chName} --listen`);
   }));
+
+// ---------- recv --listen：常驻监听（设计见 SKILL.md「Listening」） ----------
+
+const LISTEN_RETRY_DELAYS_MS = [2000, 5000, 10000, 30000];
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** 收件箱路径：默认 ~/.anotify/inbox/<身份>/<频道>.json（身份一层防止同机多 agent 互踩），ANOTIFY_INBOX_DIR 可改根 */
+function inboxFileFor(cred, channel) {
+  const base = process.env.ANOTIFY_INBOX_DIR || join(homedir(), '.anotify', 'inbox');
+  const who = String(cred.profile ?? cred.agent ?? 'env').replace(/[^A-Za-z0-9_.-]/g, '_');
+  const safe = String(channel).replace(/[^A-Za-z0-9_.-]/g, '_');
+  return join(base, who, `${safe}.json`);
+}
+
+/** 以当前身份为准、可直接照抄的完整命令前缀 */
+function agentCli(cred) {
+  return cred.profile ? `npx -y anotify@latest --profile ${cred.profile}` : 'npx -y anotify@latest';
+}
+
+/**
+ * 把「游标之后的全部消息」覆盖写入收件箱（临时文件 + 原子 rename），返回绝对路径。
+ * 监听绝不 ack：处理权在唤醒后的 agent；忘了 ack，下一轮监听会原样再收到（at-least-once 自愈）。
+ */
+function writeInbox(cred, channel, resp) {
+  const target = inboxFileFor(cred, channel);
+  mkdirSync(dirname(target), { recursive: true });
+  const messages = resp.messages.map((m) => {
+    const f = fileMeta(m);
+    return {
+      seq: m.seq,
+      sender: m.sender_name ?? m.sender,
+      sender_id: m.sender,
+      created_at: m.created_at,
+      reply_to: m.reply_to ?? null,
+      content_type: m.content_type ?? 'text/plain',
+      ...(f
+        ? {
+            file: { name: f.name, size: f.size, mime: f.mime, sha256: f.sha256 ?? null, caption: f.caption ?? null },
+            download_command: `${agentCli(cred)} download ${channel} ${m.seq}`,
+          }
+        : { content: String(m.content ?? '') }),
+    };
+  });
+  const maxSeq = resp.messages[resp.messages.length - 1].seq;
+  const payload = {
+    _meta: {
+      channel,
+      profile: cred.profile ?? cred.agent ?? 'env',
+      count: messages.length,
+      max_seq: maxSeq,
+      ack_command: `${agentCli(cred)} ack ${channel} --through ${maxSeq}`,
+      rearm_command: `${agentCli(cred)} recv ${channel} --listen`,
+      fetched_at: new Date().toISOString(),
+      ...(resp.cursor_initialized && {
+        note: 'cursor was initialized by this call: the batch covers only messages newer than 10 minutes; run recv --from-start for full history',
+      }),
+    },
+    messages,
+  };
+  const tmp = `${target}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(payload, null, 2)}\n`);
+  renameSync(tmp, target);
+  return target;
+}
+
+/**
+ * 静默长轮询直到真消息：无消息零输出、不退出（可无限时挂在后台 shell 里）；
+ * 网络/5xx 按退避重试、永不因此退出；401/403/404 这类永久错误立刻抛出（让 agent 醒来修）。
+ */
+async function listenUntilMessages(cred, channel, opts) {
+  const waitSec = Math.min(Math.max(opts.wait ?? 60, 1), 60);
+  let retry = 0;
+  for (;;) {
+    let resp;
+    try {
+      resp = await api(cred, 'GET', `/v1/channels/${encodeURIComponent(channel)}/messages`, {
+        query: { wait: waitSec, limit: opts.limit },
+      });
+      retry = 0;
+    } catch (e) {
+      if (e instanceof ApiError && [401, 403, 404].includes(e.status)) throw e;
+      await sleep(LISTEN_RETRY_DELAYS_MS[Math.min(retry++, LISTEN_RETRY_DELAYS_MS.length - 1)]);
+      continue;
+    }
+    if (!resp || !Array.isArray(resp.messages) || resp.messages.length === 0) continue;
+    const inbox = writeInbox(cred, channel, resp);
+    const last = resp.messages[resp.messages.length - 1];
+    console.log(`ANOTIFY-WAKE channel=${channel} profile=${cred.profile ?? cred.agent ?? 'env'} count=${resp.messages.length} max_seq=${last.seq} inbox=${inbox}`);
+    console.log('Next: read the inbox file, handle every message, run _meta.ack_command, then run _meta.rearm_command in this same turn (re-arm). Ending the turn without re-arming breaks the wake chain.');
+    return;
+  }
+}
 
 program
   .command('recv <channel>')
   .description('Fetch messages (prints then auto-ACKs by default; use --no-ack for programmatic consumption)')
   .option('--wait <sec>', 'Long-poll seconds 0-60', Number, 30)
+  .option('--listen', 'Stay armed: silent long-poll until real messages arrive, write them to an inbox file, print one ANOTIFY-WAKE line and exit (never auto-ACKs; survives silence indefinitely)')
   .option('--limit <n>', 'Max messages returned per call', Number, 100)
   .option('--no-ack', 'Read without ACKing (forced read-only when --since is given)')
   .option('--since <seq>', 'Temporarily override the start position (does not touch the cursor)', Number)
@@ -498,6 +595,12 @@ program
   .option('-o, --output <fmt>', 'Output format: text|json', 'text')
   .action((chName, opts) => run(async () => {
     const cred = requireCredentials();
+    if (opts.listen) {
+      if (opts.since !== undefined || opts.fromStart) throw new Error('--listen cannot be combined with --since or --from-start');
+      if (opts.output === 'json') throw new Error('--listen prints a fixed ANOTIFY-WAKE line; drop -o json');
+      await listenUntilMessages(cred, chName, opts);
+      return;
+    }
     if (opts.since !== undefined && opts.fromStart) {
       throw new Error('--since and --from-start cannot be used together');
     }
@@ -532,7 +635,7 @@ program
         body: { through },
       });
       console.log(`ACKed through ${through} (--no-ack disables auto-consume)`);
-      hint(`After handling, re-arm your background listener: ${cli()} recv ${chName} --wait 60`);
+      hint(`After handling, re-arm your background listener: ${cli()} recv ${chName} --listen`);
     }
   }));
 

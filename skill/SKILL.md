@@ -62,12 +62,15 @@ npx -y anotify@latest --profile alice send dev "@zcode Task: bump the timeout in
 Context: the gateway cuts off at 8s, so 5s causes sporadic 504s.
 Reply in this channel with the commit hash when done."
 
-# 2) Immediately arm a background listener for the reply (mandatory — run as a background shell)
-npx -y anotify@latest --profile alice recv dev --wait 60
+# 2) Immediately arm the listener (mandatory — run as a background shell)
+npx -y anotify@latest --profile alice recv dev --listen
+#    Stays silent while nothing arrives. When a reply lands it prints ONE line and exits:
+#    ANOTIFY-WAKE channel=dev profile=alice count=1 max_seq=14 inbox=/…/.anotify/inbox/alice/dev.json
 
-# 3) Reply arrives → handle it → reply → re-arm the listener
+# 3) That line wakes you → read the inbox file → handle → reply → ack → re-arm, all in the same turn
 npx -y anotify@latest --profile alice send dev "@zcode Got it, merging now." --reply-to <their seq>
-npx -y anotify@latest --profile alice recv dev --wait 60        # ← background
+npx -y anotify@latest --profile alice ack dev --through 14
+npx -y anotify@latest --profile alice recv dev --listen        # ← re-arm, same turn
 ```
 
 ## Identity
@@ -170,6 +173,7 @@ npx -y anotify@latest --profile bob download dev 14 -o out.csv  # pick a path; -
 
 ```bash
 npx -y anotify@latest --profile <you> recv dev --wait 30          # long-poll (0-60 s); prints, then auto-ACKs
+npx -y anotify@latest --profile <you> recv dev --listen           # stay armed: silent until real messages → inbox file + one ANOTIFY-WAKE line, exits, never ACKs
 npx -y anotify@latest --profile <you> recv dev --no-ack           # strict mode: read without consuming
 npx -y anotify@latest --profile <you> ack dev --through 17        # declare "≤ 17 fully handled"
 npx -y anotify@latest --profile <you> cursor dev                  # your cursor here
@@ -184,24 +188,43 @@ npx -y anotify@latest --profile <you> recv dev --since 10 -o json # from #10 as 
 
 ## Listening (the most important discipline)
 
-**After every send, immediately arm a background listener:**
+**After every send, immediately arm a listener:**
 
 ```bash
-npx -y anotify@latest --profile <you> recv <channel> --wait 60
+npx -y anotify@latest --profile <you> recv <channel> --listen
 ```
 
-- Run it as a **background shell** (your harness's background mode — Claude Code, OpenCode, …; in a bare shell `nohup … &`)
-- It returns the moment someone replies, waking you; after 60 silent seconds it exits with `(No new messages)` — **re-arm it**
-- After handling a message, re-arm again. Sending and walking away without a listener strands the other agent
-- For critical work: listen with `--no-ack`, then `ack --through <seq>` only after handling
+Run it as a **background shell** (your harness's background mode — or let a long-running foreground command auto-background; in a bare shell `nohup … &`).
+
+How `--listen` behaves:
+
+- **Silent while there is nothing**: it long-polls internally, prints nothing, never exits on silence — it can hang for the whole session lifetime. Silence is normal; do not kill it.
+- **The moment real messages arrive** it writes them to `~/.anotify/inbox/<profile>/<channel>.json` and prints exactly one wake line, then exits — that exit is your wake-up:
+
+  ```
+  ANOTIFY-WAKE channel=dev profile=alice count=2 max_seq=17 inbox=/Users/alice/.anotify/inbox/alice/dev.json
+  Next: read the inbox file, handle every message, run _meta.ack_command, then run _meta.rearm_command in this same turn (re-arm). …
+  ```
+
+- The inbox file carries full message bodies plus `_meta` with ready-to-run `ack_command` and `rearm_command` — copy them verbatim instead of composing your own.
+
+**Hard rules (breaking any of these kills the wake chain):**
+
+1. **On wake, finish the whole cycle in the same turn**: read the inbox file → handle every message → reply if needed → run `_meta.ack_command` (listening never ACKs for you) → run `_meta.rearm_command`. Never end the turn without re-arming.
+2. **Never arm a listener from an idle-time / off-peak agent task** — those cannot hold background processes.
+3. **A harness/app restart silently kills listeners.** At session start: run `channels`, drain every `pending > 0` channel, then re-arm.
+4. Transient network errors are retried inside the listener with backoff — it never dies from them. If it exits with an error instead of `ANOTIFY-WAKE`, that is a permanent problem (identity removed, channel closed) — tell your user.
+5. Forgot to ACK but re-armed anyway? The listener fires again with the same un-ACKed messages — handle them idempotently on `(channel, seq)`; nothing is lost (at-least-once).
+
+The one-shot `recv <channel> --wait 60` still exists (single poll that exits after 60 silent seconds) — fine for a quick manual check, wrong as a standing listener: it burns one wake-up per minute of silence.
 
 ## Standard collaboration workflow
 
 ```
-┌ session start      channels → drain every pending > 0 channel
-├ initiate           members (confirm names) → ONE complete message → arm background recv
-├ wait               the background recv returns the moment they reply
-├ reply arrives      handle → reply (--reply-to threads it) → re-arm background recv
+┌ session start      channels → drain every pending > 0 channel → arm recv --listen on live channels
+├ initiate           members (confirm names) → ONE complete message → arm recv --listen
+├ wait               listener stays silent; its ANOTIFY-WAKE line is your wake-up
+├ reply arrives      read inbox → handle → reply (--reply-to threads it) → ack → re-arm (same turn)
 └ before leaving     post the current state (done / stuck on what) — never leave others waiting on silence
 ```
 
@@ -211,7 +234,7 @@ npx -y anotify@latest --profile <you> recv <channel> --wait 60
 2. **Make every message actionable**: a specific question, or a task with acceptance criteria and how to report back ("reply with the commit hash"). When you finish an assigned task, report — never go silent.
 3. **Give the context**: the other agent cannot see your screen or filesystem. Include file paths, errors, relevant output and constraints in one go.
 4. **One message per round**: put everything about the current topic into a single message. Each message costs the recipient a wake-up and a context switch; if you sent something wrong, correct it with one new complete message.
-5. **Arm the listener right after sending** — nothing time-consuming in between.
+5. **Arm the listener right after sending** (`recv <ch> --listen` in a background shell) — nothing time-consuming in between.
 
 ## When something fails
 
