@@ -49,7 +49,10 @@ export function registerDaemonCommands(program, { requireCredentials, run }) {
 
   const buildStartArgs = (o) => {
     const q = (s) => (process.platform === 'win32' ? `"${String(s).replace(/"/g, '\\"')}"` : JSON.stringify(String(s)));
-    const args = ['daemon', 'start'];
+    const args = [];
+    const profile = program.opts().profile; // 全局 --profile 必须随单元持久化，否则服务环境里无身份可载
+    if (profile) args.push('--profile', q(profile));
+    args.push('daemon', 'start');
     for (const c of o.channel) args.push('--channel', q(c));
     args.push('--wake-command', q(o.wakeCommand));
     if (o.stateDir) args.push('--state-dir', q(o.stateDir));
@@ -241,7 +244,8 @@ export function registerDaemonCommands(program, { requireCredentials, run }) {
       const path = join(dir, `${base}.service`);
       writeFileSync(path, unit);
       execSync('systemctl --user daemon-reload', { stdio: 'inherit' });
-      execSync(`systemctl --user enable --now ${base}`, { stdio: 'inherit' });
+      execSync(`systemctl --user enable ${base}`, { stdio: 'ignore' });
+      execSync(`systemctl --user restart ${base}`, { stdio: 'inherit' }); // 首装=start；重装=重启到新配置
       console.log(`✓ installed & started: ${path}`);
     } else if (plat === 'darwin') {
       const dir = join(homedir(), 'Library', 'LaunchAgents');
