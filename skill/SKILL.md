@@ -223,7 +223,10 @@ The one-shot `recv <channel> --wait 60` still exists (single poll that exits aft
 
 First find out whether your harness supports **headless resume** — an external process making the harness run a prompt in your existing session (OpenCode: yes, via its HTTP API; plain desktop chat apps: usually no).
 
-- **Headless-capable → run the wake daemon** (survives harness/app restarts; recommended default):
+- **Headless-capable → run the wake daemon** (survives harness/app restarts; recommended default).
+  Before starting it, **discover your own session id** — the wake command must target the session you are:
+  OpenCode: `opencode api get /api/session/active` lists running sessions (a single hit is you; several → pick by latest activity).
+  If you cannot determine your session id reliably, fall back to the background-shell route.
 
   ```bash
   npx -y anotify@latest --profile <you> daemon start \
