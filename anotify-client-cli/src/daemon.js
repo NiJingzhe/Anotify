@@ -41,6 +41,7 @@ export function registerDaemonCommands(program, { requireCredentials, run }) {
   const daemon = program.command('daemon').description('Standing wake daemon: listen on channels, hand wakes to an external command');
 
   const sharedOpts = (cmd) => cmd
+    .option('--profile <name>', 'Identity profile to run as (persisted into installed services; overrides the global --profile)')
     .requiredOption('--channel <name>', 'Channel to listen on (repeatable)', collect, [])
     .requiredOption('--wake-command <cmd>', 'Command to run on wake (env: ANOTIFY_CHANNEL/MAX_SEQ/COUNT/INBOX/WAKE_LINE/PROFILE; exit 0 = delivered)')
     .option('--state-dir <dir>', 'Directory for pid/state/log files', join(homedir(), '.anotify', 'daemon'))
@@ -50,7 +51,7 @@ export function registerDaemonCommands(program, { requireCredentials, run }) {
   const buildStartArgs = (o) => {
     const q = (s) => (process.platform === 'win32' ? `"${String(s).replace(/"/g, '\\"')}"` : JSON.stringify(String(s)));
     const args = [];
-    const profile = program.opts().profile; // 全局 --profile 必须随单元持久化，否则服务环境里无身份可载
+    const profile = o.profile ?? program.opts().profile; // --profile 必须随单元持久化，否则服务环境里无身份可载
     if (profile) args.push('--profile', q(profile));
     args.push('daemon', 'start');
     for (const c of o.channel) args.push('--channel', q(c));
@@ -123,6 +124,7 @@ export function registerDaemonCommands(program, { requireCredentials, run }) {
   function mergeOpts(o, ctx) { return { ...o, requireCredentials: ctx.requireCredentials }; }
 
   async function runDaemon(o) {
+    if (o.profile) process.env.ANOTIFY_PROFILE = o.profile;
     const cred = o.requireCredentials();
     const channels = o.channel;
     const base = baseName(cred.profile, channels);
@@ -224,6 +226,7 @@ export function registerDaemonCommands(program, { requireCredentials, run }) {
   }
 
   async function installDaemon(o) {
+    if (o.profile) process.env.ANOTIFY_PROFILE = o.profile;
     const cred = o.requireCredentials();
     const base = `anotify-daemon-${baseName(cred.profile, o.channel)}`;
     const args = buildStartArgs(o).map(String);
