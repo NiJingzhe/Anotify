@@ -510,8 +510,8 @@ function agentCli(cred) {
 }
 
 /**
- * 把「游标之后的全部消息」覆盖写入收件箱（临时文件 + 原子 rename），返回绝对路径。
- * 监听绝不 ack：处理权在唤醒后的 agent；忘了 ack，下一轮监听会原样再收到（at-least-once 自愈）。
+ * 把「传入的消息数组」（调用方已过滤掉自己的回声）覆盖写入收件箱（临时文件 + 原子 rename），返回绝对路径。
+ * 监听不替 agent ack 他人的消息：处理权在唤醒后的 agent；忘了 ack，下一轮监听会原样再收（at-least-once 自愈）。
  */
 function writeInbox(cred, channel, resp) {
   const target = inboxFileFor(cred, channel);
@@ -556,11 +556,17 @@ function writeInbox(cred, channel, resp) {
 }
 
 /**
- * 静默长轮询直到真消息：无消息零输出、不退出（可无限时挂在后台 shell 里）；
+ * 静默长轮询直到「他人的」真消息：无消息零输出、不退出（可无限时挂在后台 shell 里）；
  * 网络/5xx 按退避重试、永不因此退出；401/403/404 这类永久错误立刻抛出（让 agent 醒来修）。
+ *
+ * 自回声过滤：自己发的消息无需「处理」，整页全为自己的消息时静默 ack（推进游标）后继续轮询，
+ * 不唤醒 agent。ack 是水位线、无法跳过消息，因此混合批次绝不整页 ack——只把他人消息写进收件箱
+ * （夹在他人消息之间的自己的消息随 ack 水位线自然覆盖；落在最后一个他人消息之后的，由下一轮
+ * 监听的整页自回声分支自愈）。对他人消息，at-least-once 语义完整保留：监听永不替 agent ack。
  */
 async function listenUntilMessages(cred, channel, opts) {
   const waitSec = Math.min(Math.max(opts.wait ?? 60, 1), 60);
+  const me = String(cred.agent_id ?? cred.agent ?? '');
   let retry = 0;
   for (;;) {
     let resp;
@@ -575,9 +581,24 @@ async function listenUntilMessages(cred, channel, opts) {
       continue;
     }
     if (!resp || !Array.isArray(resp.messages) || resp.messages.length === 0) continue;
-    const inbox = writeInbox(cred, channel, resp);
-    const last = resp.messages[resp.messages.length - 1];
-    console.log(`ANOTIFY-WAKE channel=${channel} profile=${cred.profile ?? cred.agent ?? 'env'} count=${resp.messages.length} max_seq=${last.seq} inbox=${inbox}`);
+
+    const foreign = resp.messages.filter((m) => String(m.sender) !== me);
+    if (foreign.length === 0) {
+      // 整页都是自己的消息：静默 ack 掉（失败则下轮原样重收，幂等），不唤醒
+      const last = resp.messages[resp.messages.length - 1];
+      try {
+        await api(cred, 'POST', `/v1/channels/${encodeURIComponent(channel)}/ack`, { body: { through: last.seq } });
+      } catch (e) {
+        if (e instanceof ApiError) throw e; // 永久问题（身份失效等），让 agent 醒来处理
+        await sleep(LISTEN_RETRY_DELAYS_MS[Math.min(retry++, LISTEN_RETRY_DELAYS_MS.length - 1)]);
+      }
+      continue;
+    }
+
+    const lastForeign = foreign[foreign.length - 1];
+    const ownFiltered = resp.messages.length - foreign.length;
+    const inbox = writeInbox(cred, channel, { messages: foreign, cursor_initialized: resp.cursor_initialized });
+    console.log(`ANOTIFY-WAKE channel=${channel} profile=${cred.profile ?? cred.agent ?? 'env'} count=${foreign.length} max_seq=${lastForeign.seq} inbox=${inbox}${ownFiltered ? ` own_filtered=${ownFiltered}` : ''}`);
     console.log('Next: read the inbox file, handle every message, run _meta.ack_command, then run _meta.rearm_command in this same turn (re-arm). Ending the turn without re-arming breaks the wake chain.');
     return;
   }
@@ -587,7 +608,7 @@ program
   .command('recv <channel>')
   .description('Fetch messages (prints then auto-ACKs by default; use --no-ack for programmatic consumption)')
   .option('--wait <sec>', 'Long-poll seconds 0-60', Number, 30)
-  .option('--listen', 'Stay armed: silent long-poll until real messages arrive, write them to an inbox file, print one ANOTIFY-WAKE line and exit (never auto-ACKs; survives silence indefinitely)')
+  .option('--listen', 'Stay armed: silent long-poll until messages from OTHERS arrive, write them to an inbox file, print one ANOTIFY-WAKE line and exit (your own messages are silently ACKed and never wake you; others\' messages are never auto-ACKed; survives silence indefinitely)')
   .option('--limit <n>', 'Max messages returned per call', Number, 100)
   .option('--no-ack', 'Read without ACKing (forced read-only when --since is given)')
   .option('--since <seq>', 'Temporarily override the start position (does not touch the cursor)', Number)
