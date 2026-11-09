@@ -141,12 +141,19 @@ export default function DecisionView({ decisions, hasOlder, loadingOlder, onLoad
   const { t } = useI18n();
   const present = useMemo(() => new Set(decisions.map((m) => m.seq)), [decisions]);
   const resolutions = useMemo(() => latestResolutions(decisions), [decisions]);
-  // 时间线：最新在前
-  const ordered = useMemo(() => [...decisions].sort((a, b) => b.seq - a.seq), [decisions]);
+  // 时间线：与聊天视图一致——最早在上、最新在下（「加载更早」在顶部，新记录出现在底部）
+  const ordered = useMemo(() => [...decisions].sort((a, b) => a.seq - b.seq), [decisions]);
   let lastDay = null;
 
   return (
     <div className="decisions">
+      {hasOlder && (
+        <div className="load-older">
+          <button type="button" className="btn btn-ghost" onClick={onLoadOlder} disabled={loadingOlder}>
+            {loadingOlder ? t('common.loading') : t('dec.loadOlder')}
+          </button>
+        </div>
+      )}
       {ready && !decisions.length && (
         <div className="empty-state"><p>{t('dec.empty')}</p></div>
       )}
@@ -168,13 +175,6 @@ export default function DecisionView({ decisions, hasOlder, loadingOlder, onLoad
           </div>
         );
       })}
-      {hasOlder && (
-        <div className="load-older">
-          <button type="button" className="btn btn-ghost" onClick={onLoadOlder} disabled={loadingOlder}>
-            {loadingOlder ? t('common.loading') : t('dec.loadOlder')}
-          </button>
-        </div>
-      )}
     </div>
   );
 }

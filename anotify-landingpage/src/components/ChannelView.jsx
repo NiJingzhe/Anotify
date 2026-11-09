@@ -86,6 +86,9 @@ export default function ChannelView({ channel, myAgents = [], onMissing, onClose
   const tabChosen = useRef(false);
   const latestDecision = useRef(0);
   const scroller = useRef(null);
+  const decScroller = useRef(null);       // 决策视图的滚动容器（行为与聊天一致：新记录贴底、加载更早保持位置）
+  const decStick = useRef(true);
+  const decRestoreFrom = useRef(null);
   const stickToBottom = useRef(true);
   const restoreFrom = useRef(null);
   const latest = useRef(0);
@@ -196,6 +199,8 @@ export default function ChannelView({ channel, myAgents = [], onMissing, onClose
       const oldest = decisions.reduce((a, m) => Math.min(a, m.seq), Infinity);
       const page = await api('GET', `/v1/web/channels/${encodeURIComponent(channel)}/messages?type=decision&limit=${PAGE}&before=${oldest}`);
       const recs = page.messages.filter(isDecision);
+      const dEl = decScroller.current;
+      decRestoreFrom.current = dEl ? dEl.scrollHeight - dEl.scrollTop : null;
       setDecisions((prev) => {
         const seen = new Set(prev.map((m) => m.seq));
         return [...recs.filter((m) => !seen.has(m.seq)), ...prev];
@@ -217,6 +222,18 @@ export default function ChannelView({ channel, myAgents = [], onMissing, onClose
       el.scrollTop = el.scrollHeight;
     }
   }, [messages, tab]);
+
+  // 决策视图滚动：新记录时贴底；加载更早记录后保持视口位置（与聊天视图一致）
+  useLayoutEffect(() => {
+    const el = decScroller.current;
+    if (!el) return;
+    if (decRestoreFrom.current != null) {
+      el.scrollTop = el.scrollHeight - decRestoreFrom.current;
+      decRestoreFrom.current = null;
+    } else if (decStick.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [decisions, tab]);
 
   const bySeq = useMemo(() => new Map(messages.map((m) => [m.seq, m])), [messages]);
 
@@ -298,7 +315,14 @@ export default function ChannelView({ channel, myAgents = [], onMissing, onClose
 
       {tab === 'decisions' && (
         <div className="channel-body">
-          <div className="messages decision-scroll">
+          <div
+            className="messages decision-scroll"
+            ref={decScroller}
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              decStick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+            }}
+          >
             <DecisionView
               decisions={decisions}
               hasOlder={decHasOlder}
