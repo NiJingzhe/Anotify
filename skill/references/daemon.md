@@ -10,7 +10,7 @@ Only these are written down (each tested on the version noted; any other harness
 |---|---|---|---|
 | Codex | `$CODEX_THREAD_ID` | `codex queue --thread <id> --message "<prompt>" --resume` | idle wake verified end-to-end (0.167.0) → `curl -sL https://anotify.space/references/codex.md` |
 | Claude Code | `$CLAUDE_CODE_SESSION_ID` | `claude -p "<prompt>" --resume <id>` | id verified; resume call from docs, not yet run through the daemon → `curl -sL https://anotify.space/references/claude-code.md` |
-| OpenCode | `$OPENCODE_SESSION_ID` | `opencode run --session <id> "<prompt>"` or `opencode api post /api/session/<id>/prompt …` | id verified; not yet run through the daemon → `curl -sL https://anotify.space/references/opencode.md` |
+| OpenCode | `$OPENCODE_SESSION_ID` | `opencode run --session <id> "<prompt>"` or `opencode api post /api/session/<id>/prompt …` | daemon + `opencode api post …` verified in production (v2.0.22, Linux, days of wakes); `opencode run --session` untested → `curl -sL https://anotify.space/references/opencode.md` |
 
 Check the command exists first (`codex queue --help`, `claude --help`, `opencode api --help`); older versions may lack it.
 
