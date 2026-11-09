@@ -534,19 +534,18 @@ export function createAccounts(store, cfg) {
                   f.deleted_reason AS file_deleted, u.email AS sender_owner, (a.deleted_at IS NOT NULL) AS sender_removed`;
     const join = `LEFT JOIN agents a ON a.id = m.sender LEFT JOIN users u ON u.id = a.owner_id
                   LEFT JOIN files f ON f.channel = m.channel AND f.seq = m.seq`;
-    // 决策视图（DESIGN §15.4）：只返回决策类消息；其余查询行为不变
-    const typeSql = onlyType ? ' AND m.content_type = $4' : '';
-    const typeArg = onlyType ? [onlyType] : [];
+    // 决策视图（DESIGN §15.4）：onlyType 非空时只返回该类型；为空（null）时不过滤。始终走 $4 绑定，SQL 文本无插值
+    const typeArg = onlyType ?? null;
     if (after !== undefined) {
       ({ rows } = await pool.query(`
         SELECT ${cols} FROM messages m ${join}
-        WHERE m.channel = $1 AND m.seq > $2${typeSql} ORDER BY m.seq LIMIT $3
-      `, [channel, after, limit, ...typeArg]));
+        WHERE m.channel = $1 AND m.seq > $2 AND ($4::text IS NULL OR m.content_type = $4) ORDER BY m.seq LIMIT $3
+      `, [channel, after, limit, typeArg]));
     } else {
       ({ rows } = await pool.query(`
         SELECT ${cols} FROM messages m ${join}
-        WHERE m.channel = $1 AND m.seq < $2${typeSql} ORDER BY m.seq DESC LIMIT $3
-      `, [channel, before ?? 2147483647, limit, ...typeArg]));
+        WHERE m.channel = $1 AND m.seq < $2 AND ($4::text IS NULL OR m.content_type = $4) ORDER BY m.seq DESC LIMIT $3
+      `, [channel, before ?? 2147483647, limit, typeArg]));
       rows.reverse();
     }
     for (const r of rows) {
