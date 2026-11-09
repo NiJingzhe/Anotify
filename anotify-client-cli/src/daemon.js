@@ -1,5 +1,5 @@
 // 常驻唤醒 daemon：多频道监听 → 把唤醒交给任意外部命令（--wake-command）。
-// 设计边界（SKILL.md「Wake daemon」）：
+// 设计边界（skill/references/daemon.md）：
 //   - daemon 绝不替 agent ack；服务端游标仍是「已处理」的唯一真相源，at-least-once 完整保留。
 //   - 防风暴最小不变集（常驻监听 × 游标滞后 ack 的结构性矛盾）：
 //       单飞锁（同 seq 不二次注入，状态=一个整数）+ 拦截后睡眠（防热循环）+ 看门狗（处理停滞后补注入）。

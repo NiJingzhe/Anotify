@@ -558,6 +558,11 @@ export async function createStore(databaseUrl) {
     return (await one('SELECT last_seq FROM channels WHERE name = $1', [channel]))?.last_seq ?? 0;
   }
 
+  /** 读取一条消息的类型与内容（决策校验用：resolution 的 reply_to 必须是 handoff） */
+  async function getMessageBrief(channel, seq) {
+    return one('SELECT content_type, content FROM messages WHERE channel = $1 AND seq = $2', [channel, seq]);
+  }
+
   async function hasMessage(channel, seq) {
     return !!(await one('SELECT 1 FROM messages WHERE channel = $1 AND seq = $2', [channel, seq]));
   }
@@ -772,6 +777,7 @@ export async function createStore(databaseUrl) {
     listChannels,
     latestSeq,
     hasMessage,
+    getMessageBrief,
     insertMessage,
     messagesSince,
     waitForMessage,

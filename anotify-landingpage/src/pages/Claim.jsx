@@ -6,6 +6,7 @@ import { useSession } from '../session.jsx';
 import { track } from '../analytics.js';
 import TopBar from '../components/TopBar.jsx';
 import CodeInput from '../components/CodeInput.jsx';
+import { useI18n } from '../i18n.js';
 
 function Countdown({ until }) {
   const [now, setNow] = useState(Date.now() / 1000);
@@ -19,6 +20,7 @@ function Countdown({ until }) {
 
 export default function ClaimPage({ id }) {
   const { user } = useSession();
+  const { t, rich, errMsg } = useI18n();
   const [claim, setClaim] = useState(null);
   const [error, setError] = useState(null);
   const [code, setCode] = useState('        ');
@@ -57,9 +59,9 @@ export default function ClaimPage({ id }) {
 
   let body;
   if (!user || (!claim && !error)) {
-    body = <p className="muted">Loading…</p>;
+    body = <p className="muted">{t('common.loading')}</p>;
   } else if (error) {
-    body = <p className="form-error">{error.message}</p>;
+    body = <p className="form-error">{errMsg(error)}</p>;
   } else if (done || (['approved', 'consumed'].includes(claim.status) && claim.approved_by_you)) {
     const collected = claim.status === 'consumed';
     body = (
@@ -68,28 +70,28 @@ export default function ClaimPage({ id }) {
         <p>
           <strong>{claim.display_name}</strong>{' '}
           {claim.kind === 'bind'
-            ? 'is now bound to your account.'
-            : collected ? 'is registered and belongs to your account.' : 'is approved — the name is reserved for your agent.'}
+            ? t('claim.done.bound')
+            : collected ? t('claim.done.registered') : t('claim.done.approved')}
         </p>
         <p className="muted">
           {claim.kind === 'bind' || collected
-            ? 'You can close this page.'
-            : <>Your agent finishes on its own if it is still waiting. Otherwise ask it to run its <code>register --resume</code> command within 24 hours — until then the identity doesn’t exist yet.</>}
+            ? t('claim.done.close')
+            : rich('claim.done.resume')}
         </p>
-        <a className="btn" href="#/console">Open console</a>
+        <a className="btn" href="#/console">{t('claim.done.console')}</a>
       </div>
     );
   } else if (claim.status !== 'pending') {
     const why = {
-      expired: 'This request has expired (codes are valid for 10 minutes; approved requests must be collected by the agent within 24 hours).',
-      locked: 'Too many wrong codes were entered, so this request is void.',
-      approved: 'This request was already approved by another account.',
-      consumed: 'This request was already approved by another account.',
-    }[claim.status] ?? `This request is ${claim.status}.`;
+      expired: t('claim.why.expired'),
+      locked: t('claim.why.locked'),
+      approved: t('claim.why.taken'),
+      consumed: t('claim.why.taken'),
+    }[claim.status] ?? t('claim.why.other', { status: claim.status });
     body = (
       <>
         <p className="form-error">{why}</p>
-        <p className="muted">Ask your agent to start again (<code>anotify register</code> / <code>anotify bind</code>) and open the new link.</p>
+        <p className="muted">{rich('claim.again')}</p>
       </>
     );
   } else {
@@ -97,26 +99,24 @@ export default function ClaimPage({ id }) {
       <>
         <p className="claim-lead">
           {claim.kind === 'bind'
-            ? <>The existing agent <strong>{claim.display_name}</strong> wants to be bound to your account.</>
-            : <>An agent wants to register as <strong>{claim.display_name}</strong> under your account.</>}
+            ? rich('claim.lead.bind', { name: claim.display_name })
+            : rich('claim.lead.register', { name: claim.display_name })}
         </p>
         {claim.same_name_agents > 0 && (
           <p className="notice">
-            You already own an agent named <strong>{claim.display_name}</strong>, and names must be unique on your account.
-            {claim.kind === 'bind'
-              ? <> Ask this agent to rename itself (<code>anotify rename &lt;new-name&gt;</code>) and start the bind again, or remove the other one in the <a href="#/console">console</a> first.</>
-              : <> Ask your agent to register again with a different name, or remove the other one in the <a href="#/console">console</a> first.</>}
+            {rich('claim.same', { name: claim.display_name })}{' '}
+            {claim.kind === 'bind' ? rich('claim.same.bind') : rich('claim.same.register')}
           </p>
         )}
-        <p className="muted">Enter the 8-character code your agent showed you. Signed in as {user.email}.</p>
+        <p className="muted">{t('claim.enter', { email: user.email })}</p>
         <form onSubmit={(e) => { e.preventDefault(); submit(code); }}>
           <CodeInput value={code} onChange={setCode} disabled={busy || claim.same_name_agents > 0} onComplete={submit} />
-          {submitError && <p className="form-error center">{submitError.message}</p>}
+          {submitError && <p className="form-error center">{errMsg(submitError)}</p>}
           <button className="btn btn-primary wide" disabled={busy || claim.same_name_agents > 0 || code.replace(/\s/g, '').length !== 8}>
-            {busy ? 'Approving…' : claim.kind === 'bind' ? 'Bind agent' : 'Approve agent'}
+            {busy ? t('claim.submit.busy') : claim.kind === 'bind' ? t('claim.submit.bind') : t('claim.submit.approve')}
           </button>
         </form>
-        <p className="muted small center">Expires in <Countdown until={claim.expires_at} /> · Only approve agents you started yourself.</p>
+        <p className="muted small center">{t('claim.expires.pre')} <Countdown until={claim.expires_at} /> {t('claim.expires.post')}</p>
       </>
     );
   }
@@ -126,7 +126,7 @@ export default function ClaimPage({ id }) {
       <TopBar />
       <main className="app-main centered">
         <div className="panel auth-panel claim-panel">
-          <h1 className="auth-title">{claim?.kind === 'bind' ? 'Bind an agent' : 'Approve an agent'}</h1>
+          <h1 className="auth-title">{claim?.kind === 'bind' ? t('claim.bindTitle') : t('claim.approveTitle')}</h1>
           {body}
         </div>
       </main>

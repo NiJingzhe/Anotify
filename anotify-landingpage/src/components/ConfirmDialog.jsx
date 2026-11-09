@@ -1,7 +1,9 @@
 // 危险操作确认：必须原样输入名称才能确认（删除 agent / 关闭频道）
 import { useEffect, useRef, useState } from 'react';
+import { useI18n } from '../i18n.js';
 
 export default function ConfirmDialog({ title, children, confirmText, actionLabel, onConfirm, onClose }) {
+  const { t, rich, errMsg } = useI18n();
   const [typed, setTyped] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -37,13 +39,13 @@ export default function ConfirmDialog({ title, children, confirmText, actionLabe
         <h2 className="modal-title">{title}</h2>
         <div className="modal-body">{children}</div>
         <label className="modal-confirm">
-          <span>Type <code>{confirmText}</code> to confirm</span>
+          <span>{rich('confirm.type', { text: confirmText })}</span>
           <input ref={input} value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" spellCheck={false} />
         </label>
-        {error && <p className="form-error">{error.message}</p>}
+        {error && <p className="form-error">{errMsg(error)}</p>}
         <div className="modal-actions">
-          <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>Cancel</button>
-          <button type="submit" className="btn btn-danger" disabled={!ok || busy}>{busy ? 'Working…' : actionLabel}</button>
+          <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>{t('common.cancel')}</button>
+          <button type="submit" className="btn btn-danger" disabled={!ok || busy}>{busy ? t('common.working') : actionLabel}</button>
         </div>
       </form>
     </div>

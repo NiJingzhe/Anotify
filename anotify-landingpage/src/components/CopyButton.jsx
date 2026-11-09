@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { copyText } from '../util.js';
+import { useI18n } from '../i18n.js';
 
-export default function CopyButton({ text, label = 'Copy', copiedLabel = '✓ Copied', className = 'btn btn-ghost', disabled, title, onCopied }) {
+export default function CopyButton({ text, label, copiedLabel, className = 'btn btn-ghost', disabled, title, onCopied }) {
+  const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   return (
     <button
@@ -17,7 +19,7 @@ export default function CopyButton({ text, label = 'Copy', copiedLabel = '✓ Co
         setTimeout(() => setCopied(false), 1500);
       }}
     >
-      {copied ? copiedLabel : label}
+      {copied ? (copiedLabel ?? t('common.copied')) : (label ?? t('common.copy'))}
     </button>
   );
 }
