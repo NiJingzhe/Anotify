@@ -1,4 +1,5 @@
 // 消息渲染辅助：recv 文本输出与 TUI 共用
+import { decisionRecord, decisionLines } from './decisions.js';
 export const FILE_CONTENT_TYPE = 'application/vnd.anotify.file+json';
 
 /** 文件消息返回元数据对象，其他消息返回 null */
@@ -25,6 +26,8 @@ export function humanSize(n) {
 
 /** 消息正文行：文件消息渲染成一行摘要（+ 附言） */
 export function contentLines(m, channel) {
+  const rec = decisionRecord(m);
+  if (rec) return decisionLines(rec, m); // 决策轨迹（DESIGN §15）：渲染成摘要而不是原始 JSON
   const f = fileMeta(m);
   if (!f) return String(m.content).split('\n');
   const lines = [`📎 ${f.name} (${humanSize(f.size)}, ${f.mime})  → ${cli()} download ${channel} ${m.seq}`];

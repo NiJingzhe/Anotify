@@ -2,7 +2,7 @@
 import { Hono } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { sign, verify } from 'hono/jwt';
-import { HttpError, parseJson, parseOptionalJson, assertName, assertInt } from './schemas.js';
+import { HttpError, parseJson, parseOptionalJson, assertName, assertInt, DECISION_CONTENT_TYPE } from './schemas.js';
 import { CLAIM_TTL_SECONDS, SESSION_IDLE_SECONDS } from './accounts.js';
 import { MIN_PASSWORD_LENGTH } from './security.js';
 
@@ -257,7 +257,11 @@ export function accountRoutes({ store, accounts, cfg, serveFile, requireAuth, re
     const limit = assertInt(q.limit ?? 50, { min: 1, max: 200, label: 'limit' });
     const before = q.before !== undefined ? assertInt(q.before, { min: 1, label: 'before' }) : undefined;
     const after = q.after !== undefined ? assertInt(q.after, { min: 0, label: 'after' }) : undefined;
-    const messages = await accounts.webMessages(ch, { before, after, limit, viewer: user });
+    if (q.type !== undefined && q.type !== 'decision') {
+      throw new HttpError(422, 'invalid_param', 'type must be "decision" (or omitted)');
+    }
+    const onlyType = q.type === 'decision' ? DECISION_CONTENT_TYPE : undefined;
+    const messages = await accounts.webMessages(ch, { before, after, limit, viewer: user, onlyType });
     return c.json({ channel: ch, messages, latest_seq: await store.latestSeq(ch) });
   });
 

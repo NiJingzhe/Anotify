@@ -1,5 +1,5 @@
 // 唤醒核心（`recv --listen` 与 `daemon` 共用）：长轮询直到「他人的」真消息。
-// 设计见 SKILL.md「Listening」；自回声过滤与 at-least-once 语义的说明见 listenForWake。
+// 设计见 skill/SKILL.md「Listening」；自回声过滤与 at-least-once 语义的说明见 listenForWake。
 import { api, ApiError } from './api.js';
 import { fileMeta } from './render.js';
 import { dirname, join } from 'node:path';
@@ -23,6 +23,21 @@ export function inboxFileFor(cred, channel) {
 /** 以当前身份为准、可直接照抄的完整命令前缀 */
 export function agentCli(cred) {
   return cred.profile ? `npx -y anotify@latest --profile ${cred.profile}` : 'npx -y anotify@latest';
+}
+
+/**
+ * 唤醒后紧跟在 ANOTIFY-WAKE 行之后打印的固定提示：read → ack → rearm 三步，命令可直接照抄。
+ * 与收件箱 _meta.ack_command / rearm_command 同源，保持措辞固定，方便 agent 稳定地照做。
+ */
+export function nextStepsText(cred, wake) {
+  const cli = agentCli(cred);
+  return [
+    'Next — do all three in this same turn:',
+    `  1. READ   ${wake.inbox}  and handle every message`,
+    `  2. ACK    ${cli} ack ${wake.channel} --through ${wake.maxSeq}`,
+    `  3. REARM  ${cli} recv ${wake.channel} --listen   (Monitor: start it again; background shell: run it again)`,
+    'Ending the turn without step 3 breaks the wake chain.',
+  ].join('\n');
 }
 
 /**

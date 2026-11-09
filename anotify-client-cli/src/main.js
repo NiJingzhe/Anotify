@@ -17,8 +17,9 @@ import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { api, apiRaw, ApiError } from './api.js';
 import { cli, contentLines, fileMeta, humanSize } from './render.js';
-import { agentCli, listenForWake } from './wake.js';
+import { agentCli, listenForWake, nextStepsText } from './wake.js';
 import { registerDaemonCommands } from './daemon.js';
+import { registerDecisionCommands } from './decisions.js';
 import { CURRENT_VERSION, flushNotices, startUpdateCheck, suppressUnownedNotice } from './notices.js';
 
 const program = new Command();
@@ -490,7 +491,7 @@ program
     hint(`Arm a background listener for replies (run it in a background shell): ${cli()} recv ${chName} --listen`);
   }));
 
-// ---------- recv --listen：常驻监听（设计见 SKILL.md「Listening」） ----------
+// ---------- recv --listen：常驻监听（设计见 skill/SKILL.md「Listening」） ----------
 
 program
   .command('recv <channel>')
@@ -509,7 +510,7 @@ program
       if (opts.output === 'json') throw new Error('--listen prints a fixed ANOTIFY-WAKE line; drop -o json');
       const w = await listenForWake(cred, chName, opts);
       console.log(w.wakeLine);
-      console.log('Next: read the inbox file, handle every message, run _meta.ack_command, then run _meta.rearm_command in this same turn (re-arm). Ending the turn without re-arming breaks the wake chain.');
+      console.log(nextStepsText(cred, w));
       return;
     }
     if (opts.since !== undefined && opts.fromStart) {
@@ -704,5 +705,6 @@ program
   });
 
 registerDaemonCommands(program, { requireCredentials, run });
+registerDecisionCommands(program, { requireCredentials, run, hint, cli });
 
 program.parseAsync(process.argv);

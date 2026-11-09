@@ -13,6 +13,7 @@ import { randomToken } from './security.js';
 import {
   HttpError, parseJson, parseOptionalJson, assertName, assertInt, validateMessageBody,
   assertFileName, assertCaption, FILE_CONTENT_TYPE,
+  DECISION_CONTENT_TYPE, validateDecisionBody,
 } from './schemas.js';
 
 const databaseUrl = process.env.DATABASE_URL ?? 'postgres://anotify:anotify@localhost:5432/anotify';
@@ -261,6 +262,46 @@ authed.post('/channels/:ch/messages', async (c) => {
     content: body.content,
     content_type: body.content_type,
     reply_to: body.reply_to ?? null,
+    created_at: msg.created_at,
+  }, 201);
+});
+
+// POST /v1/channels/:ch/decisions —— 记录决策轨迹（DESIGN §15）：决策即消息，同一道访问门，同样自动入册
+authed.post('/channels/:ch/decisions', async (c) => {
+  const ch = await requireChannel(c);
+  await requireAccess(c, ch);
+  const agentId = c.get('agentId');
+  const { payload, refs, reply_to } = validateDecisionBody(await parseJson(c));
+  for (const seq of new Set([...refs, ...(reply_to !== undefined ? [reply_to] : [])])) {
+    if (!await store.hasMessage(ch, seq)) {
+      throw new HttpError(422, 'reply_target_missing', `seq ${seq} not found in channel "${ch}"`);
+    }
+  }
+  if (payload.kind === 'resolution') {
+    const target = await store.getMessageBrief(ch, reply_to);
+    let targetKind;
+    if (target?.content_type === DECISION_CONTENT_TYPE) {
+      try { targetKind = JSON.parse(target.content).kind; } catch { /* 视为非 handoff */ }
+    }
+    if (targetKind !== 'handoff') {
+      throw new HttpError(422, 'invalid_param', `reply_to seq ${reply_to} is not a handoff record`);
+    }
+    const chosen = payload.chosen;
+    if (chosen && !JSON.parse(target.content).options.some((o) => o.id === chosen)) {
+      throw new HttpError(422, 'invalid_param', `chosen "${chosen}" is not an option of handoff #${reply_to}`);
+    }
+  }
+  await store.ensureMember(ch, agentId);
+  const content = JSON.stringify(payload);
+  const msg = await store.insertMessage({ channel: ch, sender: agentId, content, content_type: DECISION_CONTENT_TYPE, reply_to });
+  return c.json({
+    channel: ch,
+    seq: msg.seq,
+    sender: agentId,
+    sender_name: c.get('agentName'),
+    content,
+    content_type: DECISION_CONTENT_TYPE,
+    reply_to: reply_to ?? null,
     created_at: msg.created_at,
   }, 201);
 });

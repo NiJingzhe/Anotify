@@ -112,3 +112,120 @@ export function assertCaption(value) {
   }
   return value;
 }
+
+// ---- 决策轨迹（DESIGN §15）：决策即消息，只能由 POST /decisions 产生 ----
+
+export const DECISION_CONTENT_TYPE = 'application/vnd.anotify.decision+json';
+
+const BECAUSE_TYPES = new Set(['user', 'rule', 'fact', 'prior', 'assumption']);
+const OPTION_IDS = ['A', 'B', 'C', 'D', 'E', 'F'];
+const MAX_DECISION_FIELD_BYTES = 4 * 1024;
+
+function reqText(value, label) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new HttpError(422, 'invalid_param', `${label} must be a non-empty string`);
+  }
+  if (Buffer.byteLength(value, 'utf8') > MAX_DECISION_FIELD_BYTES) {
+    throw new HttpError(422, 'invalid_param', `${label} exceeds ${MAX_DECISION_FIELD_BYTES} bytes`);
+  }
+  return value;
+}
+
+function optText(value, label) {
+  return value === undefined || value === null || value === '' ? undefined : reqText(value, label);
+}
+
+function seqList(value, label) {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > 32) {
+    throw new HttpError(422, 'invalid_param', `${label} must be an array of at most 32 seq numbers`);
+  }
+  return value.map((v) => assertInt(v, { min: 1, label: `${label}[]` }));
+}
+
+/**
+ * 校验并规范化决策记录（DESIGN §15.3），返回 { payload, refs, reply_to }：
+ *   payload —— 写入 content 的对象（字段顺序固定）
+ *   refs    —— 需要在频道内存在的 seq 列表（prior.ref / done_so_far）
+ *   reply_to —— resolution 必填（须指向 handoff，由调用方检查目标 kind）
+ */
+export function validateDecisionBody(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw new HttpError(422, 'invalid_param', 'body must be a JSON object');
+  }
+  const kind = body.kind;
+  let reply_to;
+  if (body.reply_to !== undefined && body.reply_to !== null) {
+    reply_to = assertInt(body.reply_to, { min: 1, label: 'reply_to' });
+  }
+  const refs = [];
+
+  if (kind === 'decision') {
+    const because = body.because;
+    if (!Array.isArray(because) || because.length < 1 || because.length > 8) {
+      throw new HttpError(422, 'invalid_param', 'because must be an array of 1-8 reasons');
+    }
+    const cleaned = because.map((b, i) => {
+      if (!b || typeof b !== 'object' || !BECAUSE_TYPES.has(b.type)) {
+        throw new HttpError(422, 'invalid_param', `because[${i}].type must be one of: ${[...BECAUSE_TYPES].join(', ')}`);
+      }
+      const item = { type: b.type };
+      if (b.type === 'prior') {
+        item.ref = assertInt(b.ref, { min: 1, label: `because[${i}].ref` });
+        refs.push(item.ref);
+      } else if (b.ref !== undefined) {
+        throw new HttpError(422, 'invalid_param', `because[${i}].ref is only allowed for type "prior"`);
+      }
+      item.text = reqText(b.text, `because[${i}].text`);
+      return item;
+    });
+    const payload = { v: 1, kind, decision: reqText(body.decision, 'decision'), because: cleaned };
+    const why = optText(body.why_notify, 'why_notify');
+    if (why) payload.why_notify = why;
+    return { payload, refs, reply_to };
+  }
+
+  if (kind === 'handoff') {
+    const options = body.options;
+    if (!Array.isArray(options) || options.length < 2 || options.length > 6) {
+      throw new HttpError(422, 'invalid_param', 'options must be an array of 2-6 options');
+    }
+    let recommended = 0;
+    const cleaned = options.map((o, i) => {
+      if (!o || typeof o !== 'object' || o.id !== OPTION_IDS[i]) {
+        throw new HttpError(422, 'invalid_param', `options[${i}].id must be "${OPTION_IDS[i]}" (ids run A-F in order)`);
+      }
+      const item = { id: o.id, label: reqText(o.label, `options[${i}].label`), outcome: reqText(o.outcome, `options[${i}].outcome`) };
+      if (o.recommended === true) { item.recommended = true; recommended++; }
+      return item;
+    });
+    if (recommended > 1) throw new HttpError(422, 'invalid_param', 'at most one option may be recommended');
+    const payload = { v: 1, kind, question: reqText(body.question, 'question'), why_you: reqText(body.why_you, 'why_you') };
+    const done = seqList(body.done_so_far, 'done_so_far');
+    if (done?.length) { payload.done_so_far = done; refs.push(...done); }
+    payload.options = cleaned;
+    const blocked = optText(body.blocked, 'blocked');
+    if (blocked) payload.blocked = blocked;
+    const def = optText(body.default_action, 'default_action');
+    if (def) payload.default_action = def;
+    return { payload, refs, reply_to };
+  }
+
+  if (kind === 'resolution') {
+    if (reply_to === undefined) throw new HttpError(422, 'invalid_param', 'resolution requires reply_to (the handoff seq)');
+    const decided_by = body.decided_by ?? 'human';
+    if (decided_by !== 'human' && decided_by !== 'agent') {
+      throw new HttpError(422, 'invalid_param', 'decided_by must be "human" or "agent"');
+    }
+    const payload = { v: 1, kind };
+    if (body.chosen !== undefined && body.chosen !== null) {
+      if (!OPTION_IDS.includes(body.chosen)) throw new HttpError(422, 'invalid_param', 'chosen must be an option id A-F');
+      payload.chosen = body.chosen;
+    }
+    payload.note = reqText(body.note, 'note');
+    payload.decided_by = decided_by;
+    return { payload, refs, reply_to };
+  }
+
+  throw new HttpError(422, 'invalid_param', 'kind must be one of: decision, handoff, resolution');
+}

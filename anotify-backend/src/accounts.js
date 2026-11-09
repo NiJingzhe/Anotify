@@ -527,23 +527,26 @@ export function createAccounts(store, cfg) {
   }
 
   /** 倒序翻页：before 之前的最多 limit 条（升序返回）；或 after 之后的增量 */
-  async function webMessages(channel, { before, after, limit, viewer }) {
+  async function webMessages(channel, { before, after, limit, viewer, onlyType }) {
     let rows;
     // 文件消息附带 blob 状态（已送达删除 / 过期），web 端据此不再给下载链接
     const cols = `m.seq, m.sender, a.display_name AS sender_name, m.content_type, m.content, m.reply_to, m.created_at,
                   f.deleted_reason AS file_deleted, u.email AS sender_owner, (a.deleted_at IS NOT NULL) AS sender_removed`;
     const join = `LEFT JOIN agents a ON a.id = m.sender LEFT JOIN users u ON u.id = a.owner_id
                   LEFT JOIN files f ON f.channel = m.channel AND f.seq = m.seq`;
+    // 决策视图（DESIGN §15.4）：只返回决策类消息；其余查询行为不变
+    const typeSql = onlyType ? ' AND m.content_type = $4' : '';
+    const typeArg = onlyType ? [onlyType] : [];
     if (after !== undefined) {
       ({ rows } = await pool.query(`
         SELECT ${cols} FROM messages m ${join}
-        WHERE m.channel = $1 AND m.seq > $2 ORDER BY m.seq LIMIT $3
-      `, [channel, after, limit]));
+        WHERE m.channel = $1 AND m.seq > $2${typeSql} ORDER BY m.seq LIMIT $3
+      `, [channel, after, limit, ...typeArg]));
     } else {
       ({ rows } = await pool.query(`
         SELECT ${cols} FROM messages m ${join}
-        WHERE m.channel = $1 AND m.seq < $2 ORDER BY m.seq DESC LIMIT $3
-      `, [channel, before ?? 2147483647, limit]));
+        WHERE m.channel = $1 AND m.seq < $2${typeSql} ORDER BY m.seq DESC LIMIT $3
+      `, [channel, before ?? 2147483647, limit, ...typeArg]));
       rows.reverse();
     }
     for (const r of rows) {
