@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import GradientCanvas from './GradientCanvas.jsx';
 import { useRoute } from './router.js';
 import { SessionProvider } from './session.jsx';
+import { I18nProvider } from './i18n.js';
 import { capturePageview } from './analytics.js';
 import Landing from './pages/Landing.jsx';
 import { LoginPage, RegisterPage, VerifyPage } from './pages/Auth.jsx';
@@ -28,9 +29,11 @@ function Routes() {
 
 export default function App() {
   return (
-    <SessionProvider>
-      <GradientCanvas />
-      <Routes />
-    </SessionProvider>
+    <I18nProvider>
+      <SessionProvider>
+        <GradientCanvas />
+        <Routes />
+      </SessionProvider>
+    </I18nProvider>
   );
 }

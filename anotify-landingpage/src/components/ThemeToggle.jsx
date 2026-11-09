@@ -1,15 +1,17 @@
 import { useTheme } from '../theme.js';
+import { useI18n } from '../i18n.js';
 
 export default function ThemeToggle() {
   const { theme, toggle } = useTheme();
+  const { t } = useI18n();
   const dark = theme === 'dark';
   return (
     <button
       type="button"
       className="icon-btn theme-toggle"
       onClick={toggle}
-      aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
-      title={dark ? 'Light mode' : 'Dark mode'}
+      aria-label={dark ? t('theme.toLight') : t('theme.toDark')}
+      title={dark ? t('theme.light') : t('theme.dark')}
     >
       {dark ? (
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">

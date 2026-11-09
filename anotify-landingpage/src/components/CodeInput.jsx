@@ -1,10 +1,12 @@
 // 8 格验证码输入：自动跳格、退格回退、整段粘贴、去掉易混字符
 // value 为定长字符串，空格表示空格子（保证格子位置不因中间留空而错位）
 import { useRef } from 'react';
+import { useI18n } from '../i18n.js';
 
 const ALLOWED = /[A-HJ-NP-Z2-9]/; // 与服务端 HUMAN_ALPHABET 一致（无 0/O/1/I/L）
 
 export default function CodeInput({ length = 8, value, onChange, disabled, onComplete }) {
+  const { t } = useI18n();
   const refs = useRef([]);
   const chars = Array.from({ length }, (_, i) => (value[i] && value[i] !== ' ' ? value[i] : ''));
   const encode = (arr) => arr.map((c) => c || ' ').join('');
@@ -31,7 +33,7 @@ export default function CodeInput({ length = 8, value, onChange, disabled, onCom
   };
 
   return (
-    <div className="code-input" role="group" aria-label={`${length}-character code`}>
+    <div className="code-input" role="group" aria-label={t('code.group', { n: length })}>
       {chars.map((c, i) => (
         <input
           key={i}
@@ -44,7 +46,7 @@ export default function CodeInput({ length = 8, value, onChange, disabled, onCom
           autoComplete="one-time-code"
           spellCheck={false}
           maxLength={length}
-          aria-label={`Character ${i + 1}`}
+          aria-label={t('code.char', { n: i + 1 })}
           autoFocus={i === 0}
           onFocus={(e) => e.target.select()}
           onPaste={(e) => {

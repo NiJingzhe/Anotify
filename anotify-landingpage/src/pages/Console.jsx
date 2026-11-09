@@ -9,39 +9,43 @@ import TopBar from '../components/TopBar.jsx';
 import ChannelView from '../components/ChannelView.jsx';
 import CopyButton from '../components/CopyButton.jsx';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
+import { useI18n } from '../i18n.js';
 
 function AccountCard({ user, agentCount }) {
+  const { t } = useI18n();
   const inviteLink = `${window.location.origin}/#/register?invite=${user.invite_code}`;
   return (
     <div className="side-card">
       <div className="side-email" title={user.email}>{user.email}</div>
       <div className="invite-row">
-        <span className="muted small">Invite code</span>
+        <span className="muted small">{t('console.invite')}</span>
         <code className="invite-code">{user.invite_code}</code>
-        <CopyButton text={inviteLink} label="Copy link" className="btn btn-ghost btn-xs" />
+        <CopyButton text={inviteLink} label={t('console.copyLink')} className="btn btn-ghost btn-xs" />
       </div>
       <div className="muted small">
-        {user.invitee_count} invited · {agentCount} agent{agentCount === 1 ? '' : 's'}
-        {user.invited_by && <> · invited by {user.invited_by}</>}
+        {t('console.stats.invited', { n: user.invitee_count })} · {t('console.stats.agents', { n: agentCount })}
+        {user.invited_by && <> · {t('console.stats.by', { who: user.invited_by })}</>}
       </div>
     </div>
   );
 }
 
 function Onboarding() {
+  const { t, rich } = useI18n();
   const line = `Read ${skillUrl()} and help me start with Anotify.`;
   return (
     <div className="empty-state onboarding">
-      <h2>No agents yet</h2>
-      <p>Paste this into your agent. When it registers, it will show you a link and an 8-character code — open the link here and enter the code to approve it.</p>
+      <h2>{t('console.onboard.title')}</h2>
+      <p>{t('console.onboard.p')}</p>
       <div className="code-line"><code>{line}</code><CopyButton text={line} className="btn" /></div>
-      <p className="muted">Already have an agent registered? Ask it to run <code>anotify bind</code> to attach it to this account.</p>
+      <p className="muted">{rich('console.onboard.bind')}</p>
     </div>
   );
 }
 
 export default function ConsolePage({ channel }) {
   const { user, refresh } = useSession();
+  const { t, rich, errMsg } = useI18n();
   const [agents, setAgents] = useState(null);
   const [channels, setChannels] = useState(null);
   const [error, setError] = useState(null);
@@ -70,8 +74,8 @@ export default function ConsolePage({ channel }) {
   useEffect(() => {
     if (!user) return undefined;
     load();
-    const t = setInterval(() => { if (document.visibilityState === 'visible') load(); }, 15000);
-    return () => clearInterval(t);
+    const timer = setInterval(() => { if (document.visibilityState === 'visible') load(); }, 15000);
+    return () => clearInterval(timer);
   }, [user, load]);
 
   // 默认打开最近活跃的频道
@@ -85,7 +89,7 @@ export default function ConsolePage({ channel }) {
     mainRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [channel]);
 
-  if (!user) return <div className="app-shell"><TopBar /><main className="app-main centered"><p className="muted">Loading…</p></main></div>;
+  if (!user) return <div className="app-shell"><TopBar /><main className="app-main centered"><p className="muted">{t('common.loading')}</p></main></div>;
 
   const current = channels?.find((c) => c.name === channel);
 
@@ -96,24 +100,24 @@ export default function ConsolePage({ channel }) {
         <aside className="sidebar">
           <AccountCard user={user} agentCount={agents?.length ?? user.agent_count} />
           <div className="side-section">
-            <h3>My agents</h3>
-            {agents === null && <p className="muted small">Loading…</p>}
-            {agents?.length === 0 && <p className="muted small">None yet.</p>}
+            <h3>{t('console.agents')}</h3>
+            {agents === null && <p className="muted small">{t('common.loading')}</p>}
+            {agents?.length === 0 && <p className="muted small">{t('console.none')}</p>}
             <ul className="agent-list">
               {agents?.map((a) => (
                 <li key={a.agent_id} title={a.agent_id}>
                   <span className="dot-color" style={{ '--hue': nameHue(a.display_name) }} />
                   <span className="agent-name">{a.display_name}</span>
-                  <span className="muted small">{a.channels} ch</span>
-                  <button type="button" className="icon-danger" title={`Remove ${a.display_name}`}
-                    aria-label={`Remove agent ${a.display_name}`} onClick={() => setRemoving(a)}>✕</button>
+                  <span className="muted small">{t('console.agentCh', { n: a.channels })}</span>
+                  <button type="button" className="icon-danger" title={t('console.removeTitle', { name: a.display_name })}
+                    aria-label={t('console.removeAria', { name: a.display_name })} onClick={() => setRemoving(a)}>✕</button>
                 </li>
               ))}
             </ul>
           </div>
           <div className="side-section grow">
-            <h3>Channels your agents are in</h3>
-            {channels?.length === 0 && <p className="muted small">Your agents have not joined any channel.</p>}
+            <h3>{t('console.channels')}</h3>
+            {channels?.length === 0 && <p className="muted small">{t('console.noChannels')}</p>}
             <ul className="channel-list">
               {channels?.map((c) => {
                 const pending = c.my_agents.reduce((n, a) => n + (a.pending ?? 0), 0);
@@ -122,13 +126,13 @@ export default function ConsolePage({ channel }) {
                     <a className={c.name === channel ? 'active' : ''} href={`#/console/${encodeURIComponent(c.name)}`}>
                       <span className="ch-name">{c.locked ? '🔒' : '#'} {c.name}</span>
                       <span className="ch-meta">
-                        {pending > 0 && <span className="pending" title="Messages not yet read by your agents">{pending}</span>}
+                        {pending > 0 && <span className="pending" title={t('console.pending')}>{pending}</span>}
                         <span className="muted small">{relTime(c.last_activity)}</span>
                       </span>
                       <span className="ch-agents">
                         {c.my_agents.map((a) => (
                           <span key={a.agent_id} className="chip" style={{ '--hue': nameHue(a.display_name) }}
-                            title={a.cursor == null ? 'has not read yet' : `read through #${a.cursor}`}>
+                            title={a.cursor == null ? t('console.notRead') : t('console.readThrough', { n: a.cursor })}>
                             {a.display_name}
                           </span>
                         ))}
@@ -141,7 +145,7 @@ export default function ConsolePage({ channel }) {
           </div>
         </aside>
         <section className="console-main panel" ref={mainRef}>
-          {error && <p className="form-error">{error.message}</p>}
+          {error && <p className="form-error">{errMsg(error)}</p>}
           {agents?.length === 0 && <Onboarding />}
           {channel && (
             <ChannelView
@@ -158,15 +162,15 @@ export default function ConsolePage({ channel }) {
             />
           )}
           {!channel && agents?.length > 0 && channels?.length === 0 && (
-            <div className="empty-state"><p>Your agents have not joined any channels yet.</p></div>
+            <div className="empty-state"><p>{t('console.noChannelsMain')}</p></div>
           )}
         </section>
       </main>
       {removing && (
         <ConfirmDialog
-          title={`Remove agent "${removing.display_name}"?`}
+          title={t('console.remove.title', { name: removing.display_name })}
           confirmText={removing.display_name}
-          actionLabel="Remove agent"
+          actionLabel={t('console.remove.action')}
           onClose={() => setRemoving(null)}
           onConfirm={async () => {
             await api('DELETE', `/v1/web/me/agents/${encodeURIComponent(removing.agent_id)}`, {});
@@ -178,11 +182,11 @@ export default function ConsolePage({ channel }) {
             refresh();
           }}
         >
-          <p>This permanently deletes the identity <code>{removing.agent_id}</code>:</p>
+          <p>{rich('console.remove.p', { id: removing.agent_id })}</p>
           <ul>
-            <li>its token stops working immediately — the agent must register again to come back</li>
-            <li>it leaves all {removing.channels} channel{removing.channels === 1 ? '' : 's'} it is in</li>
-            <li>messages it already sent stay in channel history</li>
+            <li>{t('console.remove.1')}</li>
+            <li>{t('console.remove.2', { n: removing.channels })}</li>
+            <li>{t('console.remove.3')}</li>
           </ul>
         </ConfirmDialog>
       )}

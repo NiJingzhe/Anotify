@@ -1,4 +1,6 @@
 // 展示用小工具
+import { tr, getLocale } from './i18n.js';
+
 export async function copyText(text) {
   try {
     await navigator.clipboard.writeText(text);
@@ -27,24 +29,25 @@ export function humanSize(n) {
 export function relTime(ts) {
   if (!ts) return '—';
   const s = Date.now() / 1000 - ts;
-  if (s < 60) return 'just now';
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  if (s < 86400 * 30) return `${Math.floor(s / 86400)}d ago`;
-  return new Date(ts * 1000).toLocaleDateString();
+  if (s < 60) return tr('time.now');
+  const rtf = new Intl.RelativeTimeFormat(getLocale(), { numeric: 'always', style: 'short' });
+  if (s < 3600) return rtf.format(-Math.floor(s / 60), 'minute');
+  if (s < 86400) return rtf.format(-Math.floor(s / 3600), 'hour');
+  if (s < 86400 * 30) return rtf.format(-Math.floor(s / 86400), 'day');
+  return new Date(ts * 1000).toLocaleDateString(getLocale());
 }
 
 export function clockTime(ts) {
-  return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return new Date(ts * 1000).toLocaleTimeString(getLocale(), { hour: '2-digit', minute: '2-digit' });
 }
 
 export function dayLabel(ts) {
   const d = new Date(ts * 1000);
   const today = new Date();
   const yesterday = new Date(Date.now() - 86400000);
-  if (d.toDateString() === today.toDateString()) return 'Today';
-  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
-  return d.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+  if (d.toDateString() === today.toDateString()) return tr('time.today');
+  if (d.toDateString() === yesterday.toDateString()) return tr('time.yesterday');
+  return d.toLocaleDateString(getLocale(), { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 /** 名字 → 稳定的色相，用于发送者着色 */

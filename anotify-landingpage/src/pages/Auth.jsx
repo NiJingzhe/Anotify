@@ -5,6 +5,7 @@ import { navigate, rememberNext, takeNext } from '../router.js';
 import { useSession } from '../session.jsx';
 import { track, identifyUser } from '../analytics.js';
 import TopBar from '../components/TopBar.jsx';
+import { useI18n } from '../i18n.js';
 
 function AuthShell({ title, subtitle, children }) {
   return (
@@ -28,13 +29,14 @@ export function passwordChecks(pw) {
 }
 
 function ResendButton({ email }) {
+  const { t, errMsg } = useI18n();
   const [state, setState] = useState('idle');
   const [msg, setMsg] = useState('');
   const [cooldown, setCooldown] = useState(0);
   useEffect(() => {
     if (!cooldown) return undefined;
-    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(timer);
   }, [cooldown]);
   return (
     <div className="resend">
@@ -46,16 +48,16 @@ function ResendButton({ email }) {
           setState('busy');
           try {
             await api('POST', '/v1/auth/resend', { email });
-            setMsg('Sent — check your inbox (and spam folder).');
+            setMsg(t('auth.resend.sent'));
             setCooldown(60);
           } catch (e) {
-            setMsg(e.message);
+            setMsg(errMsg(e));
           } finally {
             setState('idle');
           }
         }}
       >
-        {cooldown ? `Resend in ${cooldown}s` : 'Resend verification email'}
+        {cooldown ? t('auth.resend.cooldown', { s: cooldown }) : t('auth.resend.btn')}
       </button>
       {msg && <p className="muted small">{msg}</p>}
     </div>
@@ -64,6 +66,7 @@ function ResendButton({ email }) {
 
 export function LoginPage({ query }) {
   const { setUser } = useSession();
+  const { t, rich, errMsg } = useI18n();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
@@ -71,7 +74,7 @@ export function LoginPage({ query }) {
   useEffect(() => { if (query.next) rememberNext(query.next); }, [query.next]);
 
   return (
-    <AuthShell title="Sign in" subtitle="Watch your agents' channels and approve new agents.">
+    <AuthShell title={t('login.title')} subtitle={t('login.sub')}>
       <form
         className="form"
         onSubmit={async (e) => {
@@ -89,18 +92,19 @@ export function LoginPage({ query }) {
           }
         }}
       >
-        <label>Email<input type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></label>
-        <label>Password<input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} /></label>
-        {error && <p className="form-error">{error.message}</p>}
+        <label>{t('auth.email')}<input type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></label>
+        <label>{t('auth.password')}<input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} /></label>
+        {error && <p className="form-error">{errMsg(error)}</p>}
         {error?.code === 'email_not_verified' && <ResendButton email={email} />}
-        <button className="btn btn-primary" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+        <button className="btn btn-primary" disabled={busy}>{busy ? t('login.busy') : t('login.submit')}</button>
       </form>
-      <p className="auth-alt">No account yet? <a href="#/register">Create one</a></p>
+      <p className="auth-alt">{rich('login.noAccount')}</p>
     </AuthShell>
   );
 }
 
 export function RegisterPage({ query }) {
+  const { t, rich, errMsg } = useI18n();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [invite, setInvite] = useState(query.invite ?? '');
@@ -115,28 +119,24 @@ export function RegisterPage({ query }) {
 
   if (sentTo) {
     return (
-      <AuthShell title="Check your inbox" subtitle={`We sent a verification link to ${sentTo}.`}>
+      <AuthShell title={t('sent.title')} subtitle={t('sent.sub', { email: sentTo })}>
         <div className="spam-note" role="note">
           <span className="spam-emoji" aria-hidden="true">🕵️</span>
-          <span>
-            <b>Not there within a minute or two?</b> Our email is probably hiding in your <b>spam folder</b> —
-            it does that sometimes. Go rescue it and mark us “not spam”, or we may never find our way home. 📬
-          </span>
+          <span>{rich('sent.spam')}</span>
         </div>
-        <p className="muted">Open the link in that email to activate your account — you will be signed in automatically. The link is valid for 24 hours.</p>
+        <p className="muted">{t('sent.open')}</p>
         <ResendButton email={sentTo} />
-        <p className="auth-alt"><a href="#/login">Back to sign in</a></p>
+        <p className="auth-alt">{rich('sent.back')}</p>
       </AuthShell>
     );
   }
 
   const full = config && config.daily_signup_remaining === 0;
   return (
-    <AuthShell title="Create your account" subtitle="An account lets you own agents and watch their channels.">
+    <AuthShell title={t('register.title')} subtitle={t('register.sub')}>
       {full && (
         <div className="notice">
-          Today's sign-up quota ({config.daily_signup_limit} verification emails per day) has been reached. Please come back and register tomorrow.
-          <br /><span className="muted">今日注册名额已满，请明天再来注册。</span>
+          {t('register.full', { limit: config.daily_signup_limit })}
         </div>
       )}
       <form
@@ -157,35 +157,36 @@ export function RegisterPage({ query }) {
           }
         }}
       >
-        <label>Email<input type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></label>
+        <label>{t('auth.email')}<input type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></label>
         <label>
-          Password
+          {t('auth.password')}
           <span className="pw-wrap">
             <input type={showPw ? 'text' : 'password'} autoComplete="new-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
-            <button type="button" className="linklike small" onClick={() => setShowPw((v) => !v)}>{showPw ? 'Hide' : 'Show'}</button>
+            <button type="button" className="linklike small" onClick={() => setShowPw((v) => !v)}>{showPw ? t('register.hide') : t('register.show')}</button>
           </span>
         </label>
         <ul className="pw-checks">
-          <li className={checks.length ? 'ok' : ''}>At least 8 characters</li>
-          <li className={checks.classes ? 'ok' : ''}>Mix at least two of: uppercase, lowercase, digits, symbols</li>
+          <li className={checks.length ? 'ok' : ''}>{t('register.check.length')}</li>
+          <li className={checks.classes ? 'ok' : ''}>{t('register.check.classes')}</li>
         </ul>
         <label>
-          <span>Invite code <span className="muted small">(optional)</span></span>
-          <input value={invite} onChange={(e) => setInvite(e.target.value.toUpperCase())} maxLength={9} placeholder="e.g. 7KQ2MXRA" />
+          <span>{t('register.invite')} <span className="muted small">{t('register.optional')}</span></span>
+          <input value={invite} onChange={(e) => setInvite(e.target.value.toUpperCase())} maxLength={9} placeholder={t('register.invitePlaceholder')} />
         </label>
-        {error && <p className={`form-error${error.code === 'daily_signup_limit' ? ' big' : ''}`}>{error.message}</p>}
+        {error && <p className={`form-error${error.code === 'daily_signup_limit' ? ' big' : ''}`}>{errMsg(error)}</p>}
         <button className="btn btn-primary" disabled={busy || full || !checks.length || !checks.classes}>
-          {busy ? 'Creating…' : 'Create account'}
+          {busy ? t('register.busy') : t('register.submit')}
         </button>
-        {config && !full && <p className="muted small center">{config.daily_signup_remaining} sign-ups left today</p>}
+        {config && !full && <p className="muted small center">{t('register.left', { n: config.daily_signup_remaining })}</p>}
       </form>
-      <p className="auth-alt">Already have an account? <a href="#/login">Sign in</a></p>
+      <p className="auth-alt">{rich('register.haveAccount')}</p>
     </AuthShell>
   );
 }
 
 export function VerifyPage({ query }) {
   const { setUser } = useSession();
+  const { t, rich, errMsg } = useI18n();
   const [error, setError] = useState(null);
   const started = useRef(false);
   useEffect(() => {
@@ -201,13 +202,13 @@ export function VerifyPage({ query }) {
       .catch(setError);
   }, [query.token, setUser]);
   return (
-    <AuthShell title={error ? 'Verification failed' : 'Verifying…'}>
+    <AuthShell title={error ? t('verify.failed') : t('verify.busy')}>
       {error ? (
         <>
-          <p className="form-error">{error.message}</p>
-          <p className="auth-alt"><a href="#/login">Sign in</a> · <a href="#/register">Register again</a></p>
+          <p className="form-error">{errMsg(error)}</p>
+          <p className="auth-alt">{rich('verify.links')}</p>
         </>
-      ) : <p className="muted">One moment.</p>}
+      ) : <p className="muted">{t('verify.moment')}</p>}
     </AuthShell>
   );
 }
