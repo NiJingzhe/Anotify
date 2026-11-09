@@ -42,7 +42,7 @@ export function tr(key, vars) {
 
 export const hasKey = (key) => key in DICTS[current] || key in en;
 
-const TAG = /<(b|em|code)>(.*?)<\/\1>|<a href="([^"]*)">(.*?)<\/a>/gs;
+const TAG_SOURCE = '<(b|em|code)>(.*?)<\\/\\1>|<a href="([^"]*)">(.*?)<\\/a>';
 
 function parse(str, vars) {
   const out = [];
@@ -50,12 +50,14 @@ function parse(str, vars) {
   let i = 0;
   let m;
   const text = (s) => fill(s, vars);
-  TAG.lastIndex = 0;
-  while ((m = TAG.exec(str))) {
+  // 每次调用用自己的正则：带 g 标志的正则 lastIndex 是实例状态，parse 递归时共用同一个会被内层重置，
+  // 外层 while 就会死循环、数组无限增长（页面一打开内存暴涨）
+  const re = new RegExp(TAG_SOURCE, 'gs');
+  while ((m = re.exec(str))) {
     if (m.index > last) out.push(text(str.slice(last, m.index)));
+    last = re.lastIndex;
     if (m[1]) out.push(createElement(m[1], { key: i++ }, parse(m[2], vars)));
     else out.push(createElement('a', { key: i++, href: m[3] }, parse(m[4], vars)));
-    last = TAG.lastIndex;
   }
   if (last < str.length) out.push(text(str.slice(last)));
   return out;
